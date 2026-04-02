@@ -34,6 +34,8 @@ class Judge(models.Model):
     checkin = models.BooleanField(default=False)
 
     def get_availability(self, round_num):
+        if round_num > 5:
+            return True
         return getattr(self, f"available_round{round_num}")
 
     def get_preside_preference(self):

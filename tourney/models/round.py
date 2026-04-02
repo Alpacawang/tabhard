@@ -14,7 +14,7 @@ class Pairing(models.Model):
         null=True,
         blank=True
     )
-    round_num = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    round_num = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(20)])
     team_submit = models.BooleanField(default=False)
     final_submit = models.BooleanField(default=False)
     publish = models.BooleanField(default=False)
@@ -27,10 +27,11 @@ class Pairing(models.Model):
         unique_together = ('division', 'round_num',)
 
     def __str__(self):
+        label = self.tournament.get_round_label(self.round_num) if self.tournament else f'Round {self.round_num}'
         if self.division != None:
-            return f'Round {self.round_num} {self.division}'
+            return f'{label} {self.division}'
         else:
-            return f'Round {self.round_num}'
+            return f'{label}'
 
 class Round(models.Model):
     pairing = models.ForeignKey(Pairing, on_delete=models.CASCADE, related_name='rounds', related_query_name='round', null=True)
@@ -70,23 +71,26 @@ class Round(models.Model):
         super().clean()
         errors = []
 
+        is_elim = self.pairing.tournament and self.pairing.tournament.is_elim_round(self.pairing.round_num)
+
         if self.pairing.team_submit or self.pairing.final_submit:
             if not self.p_team or not self.d_team:
                 errors.append('One team did not get an opponent to compete against!')
                 raise ValidationError(errors)
             if self.p_team == self.d_team:
                 errors.append(f'{self.p_team} can\'t compete against itself!')
-            if self.p_team.next_side(self.pairing.round_num) == 'd':
-                errors.append(f"{self.p_team} is supposed to play d this round")
-            if self.d_team.next_side(self.pairing.round_num) == 'p':
-                errors.append(f"{self.d_team} is supposed to play p this round")
-            for round in self.p_team.p_rounds.all():
-                if round != self and round.pairing != self.pairing and round.d_team == self.d_team:
-                    errors.append(f"{self.p_team} and {self.d_team} played each other before")
-            if self.pairing.tournament.conflict_other_side:
-                for round in self.p_team.d_rounds.all():
-                    if round != self and round.pairing != self.pairing and round.p_team == self.d_team:
-                        errors.append(f"{self.p_team} and {self.d_team} played each other before on the same side")
+            if not is_elim:
+                if self.p_team.next_side(self.pairing.round_num) == 'd':
+                    errors.append(f"{self.p_team} is supposed to play d this round")
+                if self.d_team.next_side(self.pairing.round_num) == 'p':
+                    errors.append(f"{self.d_team} is supposed to play p this round")
+                for round in self.p_team.p_rounds.all():
+                    if round != self and round.pairing != self.pairing and round.d_team == self.d_team:
+                        errors.append(f"{self.p_team} and {self.d_team} played each other before")
+                if self.pairing.tournament.conflict_other_side:
+                    for round in self.p_team.d_rounds.all():
+                        if round != self and round.pairing != self.pairing and round.p_team == self.d_team:
+                            errors.append(f"{self.p_team} and {self.d_team} played each other before on the same side")
 
         if self.pairing.final_submit:
 
@@ -138,6 +142,5 @@ class Round(models.Model):
         #         for ballot in Ballot.objects.filter(round=self).all():
         #             if ballot.judge not in self.judges:
         #                 Ballot.objects.filter(round=self, judge=ballot.judge).delete()
-
 
 

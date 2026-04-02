@@ -16,7 +16,7 @@
 		{% endif %}
 		<div class="alert alert-primary" role="alert">
 			Only ONE team should work on the captains meeting form at any given time.
-			Simultaneous changes would override each other. {{request.user.tournament.p_choice}} should fill the form out first, and then the defense should.
+			Simultaneous changes would override each other. Petitioner should fill the form out first, and then the Respondent should.
 		</div>
 
 		{% for section in section_forms%}
@@ -31,18 +31,7 @@
 			{% endfor %}
 		{% endfor %}
 
-
-		{% for pronouns_form in pronouns_forms %}
-			{% if pronouns_form.errors %}
-				{% for key, value in pronouns_form.errors.items %}
-					{% if value %}
-						<div class="alert alert-danger" role="alert">{{ value }}</div>
-					{% endif %}
-				{% endfor %}
-			{% endif %}
-		{% endfor %}
-
-		<h3>Captains Meeting Form</h3>
+		<h3>Team Information</h3>
 		<div class="card-group my-3">
 				<div class="card border gx-2">
 					<h5 class="card-header">
@@ -78,7 +67,7 @@
 								</li>
 							{% endif %}
 							<li class="list-group-item"><span class="text-primary">Blue</span> denotes {{request.user.tournament.p_choice}},
-								and <span class="text-secondary">Purple</span> denotes Defense</li>
+								and <span class="text-secondary">Purple</span> denotes Respondent</li>
 
 							</ul>
 					</div>
@@ -101,7 +90,7 @@
 				</div>
 				<div class="card border gx-2">
 					<h5 class="card-header">
-						Defense Team Info
+						Respondent Team Info
 					</h5>
 					<div class="card-body text-start">
 						<div class="card-text my-1">Team Name: {{ object.round.d_team }}</div>
@@ -184,142 +173,22 @@
 {#		</div>#}
 
 
-		<h2>Roles</h2>
+		<h2>Speaker Order</h2>
 
 
 			{% for section in section_forms %}
-				<div class="card my-5">
+				<div class="card my-4 shadow-sm">
 				<h4 class="card-header">{{ section.0.init_subsection.section.name }}</h4>
 				<div class="card-body">
-						<div class="row">
-							<div class="col-md-6 pe-4">
-								<div class="card border border-primary">
-									<div class="card-header">
-										{{request.user.tournament.p_choice}}
-									</div>
-									<div class="card-body">
-										<ul class="list-group">
-											{% for subsection_form in section %}
-												{% if subsection_form.init_subsection.side == 'P' %}
-													{% if subsection_form.init_subsection.role == 'wit' %}
-														<li class="list-group-item">
-															<div>Character Name:</div>
-															{% render_field subsection_form.character class='form-select mt-1' name='character' %}
-														</li>
-													{% endif %}
-													<li class="list-group-item">
-														<div>{{ subsection_form.init_subsection.help_text }}:</div>
-														{% render_field subsection_form.competitor class='form-select mt-1' name='competitor' %}
-													</li>
-												{% endif %}
-											{% endfor %}
-										</ul>
-									</div>
-								</div>
-							</div>
-							<div class="col-md-6 ps-4">
-								<div class="card border border-secondary">
-									<div class="card-header">
-										Defense
-									</div>
-									<div class="card-body">
-										<ul class="list-group">
-											{% for subsection_form in section %}
-												{% if subsection_form.init_subsection.side == 'D' %}
-													{% if subsection_form.init_subsection.role == 'wit' %}
-														<li class="list-group-item">
-														<div>Character Name:</div>
-														{% render_field subsection_form.character class='form-select mt-1' name='character' %}
-														</li>
-													{% endif %}
-													<li class="list-group-item">
-														<div>{{ subsection_form.init_subsection.help_text }}:</div>
-														{% render_field subsection_form.competitor class='form-select mt-1' name='competitor' %}
-													</li>
-												{% endif %}
-											{% endfor %}
-										</ul>
-									</div>
-								</div>
+						<div class="row align-items-end">
+							<div class="col-md-12">
+								<label class="form-label fw-semibold">{{ section.0.init_subsection.section.name }}</label>
+								{% render_field section.0.competitor class='form-select form-select-lg' name='competitor' %}
 							</div>
 						</div>
 					</div>
 				</div>
 			{% endfor %}
-
-			<div class="card my-5">
-			<h4 class="card-header">Pronouns</h4>
-			<div class="card-body">
-				<div class="card-text">
-					The preferred pronouns of the testifying witnesses are announced by the side calling them.
-				</div>
-				<div class="card-group my-3">
-					<div class="card border gx-2">
-						<div class="card-header">
-							{{request.user.tournament.p_choice}}
-						</div>
-						<div class="card-body text-start">
-							<ul class="list-group">
-								{% for pronouns_form in pronouns_forms %}
-									{% if pronouns_form.init_character.side == 'P' %}
-										<li class="list-group-item">
-										<div>{{ pronouns_form.init_character }}</div>
-										{% render_field pronouns_form.pronouns class='form-select mt-1' name='pronouns' %}
-										</li>
-									{% endif %}
-								{% endfor %}
-							</ul>
-						</div>
-					</div>
-					<div class="card border gx-2">
-						<div class="card-header">
-							Defense
-						</div>
-						<div class="card-body text-start">
-							<ul class="list-group">
-								{% for pronouns_form in pronouns_forms %}
-									{% if pronouns_form.init_character.side == 'D' %}
-										<li class="list-group-item">
-										<div>{{ pronouns_form.init_character }}</div>
-										{% render_field pronouns_form.pronouns class='form-select mt-1' name='pronouns' %}
-										</li>
-									{% endif %}
-								{% endfor %}
-							</ul>
-						</div>
-					</div>
-
-					<div class="card border gx-2">
-						<div class="card-header">
-							Other
-						</div>
-						<div class="card-body text-start">
-							<ul class="list-group">
-								{% for pronouns_form in pronouns_forms %}
-									{% if pronouns_form.init_character.side == 'other' %}
-										<li class="list-group-item">
-										<div>{{ pronouns_form.init_character }}</div>
-										{% render_field pronouns_form.pronouns class='form-select mt-1' name='pronouns' %}
-										</li>
-									{% endif %}
-								{% endfor %}
-							</ul>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-
-
-		<div class="card my-5">
-			<h4 class="card-header">Demo</h4>
-			<div class="card-body">
-
-				{% render_field form.demo class='form-check-input mt-1' name="demo" %}
-				<span class="mx-3">{{ form.demo.help_text }}</span>
-
-			</div>
-		</div>
 
 
 
@@ -346,4 +215,3 @@
 {% block js %}
 	<script type="text/javascript" src="{% static 'js/form.js' %}"></script>
 {% endblock js %}
-

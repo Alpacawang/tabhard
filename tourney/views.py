@@ -43,6 +43,84 @@ def sort_teams(teams):
                                 key=lambda x: (x.total_ballots, x.total_cs, x.total_pd))))
 
 
+def get_prelim_stats(team, prelim_rounds):
+    ballots = 0
+    pd = 0
+    rounds = list(team.p_rounds.filter(pairing__round_num__lte=prelim_rounds)) + list(
+        team.d_rounds.filter(pairing__round_num__lte=prelim_rounds)
+    )
+    for round_obj in rounds:
+        if round_obj.p_team == team:
+            ballots += sum(ballot.p_ballot for ballot in round_obj.ballots.all())
+            pd += sum(ballot.p_pd for ballot in round_obj.ballots.all())
+        else:
+            ballots += sum(ballot.d_ballot for ballot in round_obj.ballots.all())
+            pd += sum(ballot.d_pd for ballot in round_obj.ballots.all())
+    return ballots, pd
+
+
+def rank_teams_for_break(tournament, teams=None):
+    if teams is None:
+        teams = Team.objects.filter(user__tournament=tournament)
+    ranked = []
+    for team in teams:
+        ballots, pd = get_prelim_stats(team, tournament.prelim_rounds)
+        ranked.append((team, ballots, pd))
+    ranked.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    return ranked
+
+
+def get_round_winner(round_obj):
+    p_ballots = sum(ballot.p_ballot for ballot in round_obj.ballots.all())
+    d_ballots = sum(ballot.d_ballot for ballot in round_obj.ballots.all())
+    p_pd = sum(ballot.p_pd for ballot in round_obj.ballots.all())
+    d_pd = sum(ballot.d_pd for ballot in round_obj.ballots.all())
+    if p_ballots > d_ballots:
+        return round_obj.p_team
+    if d_ballots > p_ballots:
+        return round_obj.d_team
+    if p_pd > d_pd:
+        return round_obj.p_team
+    if d_pd > p_pd:
+        return round_obj.d_team
+    return None
+
+
+def get_elim_teams_for_round(tournament, round_num):
+    if not tournament.is_elim_round(round_num):
+        return []
+    if round_num == tournament.prelim_rounds + 1:
+        ranked = rank_teams_for_break(tournament)
+        return [team for team, ballots, pd in ranked[:tournament.elim_break_size]]
+
+    previous_pairing = Pairing.objects.filter(tournament=tournament, round_num=round_num - 1).first()
+    if not previous_pairing:
+        return []
+    winners = [winner for winner in (get_round_winner(round_obj) for round_obj in previous_pairing.rounds.all()) if winner]
+    ranked_winners = rank_teams_for_break(tournament, winners)
+    return [team for team, ballots, pd in ranked_winners]
+
+
+def build_elim_pairings(tournament, round_num):
+    teams = get_elim_teams_for_round(tournament, round_num)
+    if not teams:
+        return []
+    pairings = []
+    while len(teams) >= 2:
+        pairings.append((teams.pop(0), teams.pop(-1)))
+    return pairings
+
+
+def get_pairing_capacity(tournament, round_num):
+    if tournament.is_elim_round(round_num):
+        return max(1, len(build_elim_pairings(tournament, round_num)))
+    return int(tournament.division_team_num / 2)
+
+
+def get_round_title(tournament, round_num):
+    return tournament.get_round_label(round_num)
+
+
 def index(request):
     return render(request, 'index.html')
 
@@ -90,11 +168,19 @@ def individual_awards(request):
 @user_passes_test(lambda u: u.is_staff)
 def next_pairing(request, round_num):
     tournament = request.user.tournament
-    # if Pairing.objects.filter(tournament=tournament).exists():
-    #     next_round = max([pairing.round_num for pairing in Pairing.objects.filter(tournament=tournament)])+1
-    # else:
-    #     next_round = 1
     next_round = round_num + 1
+    round_title = get_round_title(tournament, next_round)
+    if tournament.is_elim_round(next_round):
+        elim_pairs = build_elim_pairings(tournament, next_round)
+        dict = {
+            'next_round': next_round,
+            'next_round_title': round_title,
+            'divs': ['Break'],
+            'teams': [elim_pairs],
+            'is_elim': True,
+        }
+        return render(request, 'tourney/pairing/next_pairing.html', dict)
+
     if tournament.split_division:
         if next_round % 2 == 0:
             i_d_teams = sort_teams([team for team in Team.objects.filter(division='Disney')
@@ -130,9 +216,11 @@ def next_pairing(request, round_num):
                     div2_d_teams.append(div2_teams[i])
 
         dict = {'next_round': next_round,
+                'next_round_title': round_title,
                 'divs': ['Disney', 'Universal'],
                 'teams': [zip(div1_p_teams, div1_d_teams),
-                          zip(div2_p_teams, div2_d_teams)]
+                          zip(div2_p_teams, div2_d_teams)],
+                'is_elim': False,
                 }
     else:
         if next_round % 2 == 0:
@@ -153,8 +241,10 @@ def next_pairing(request, round_num):
                     p_teams.append(teams[i + 1])
                     d_teams.append(teams[i])
         dict = {'next_round': next_round,
+                'next_round_title': round_title,
                 'divs': ['Teams'],
-                'teams': [zip(p_teams, d_teams)]
+                'teams': [zip(p_teams, d_teams)],
+                'is_elim': False,
                 }
     return render(request, 'tourney/pairing/next_pairing.html', dict)
 
@@ -173,7 +263,12 @@ def pairing_index(request):
             tournament=tournament)]) + 1
     else:
         next_round = 1
-    dict = {'pairings': pairings, 'next_round': next_round}
+    dict = {
+        'pairings': pairings,
+        'next_round': next_round,
+        'can_add_pairing': next_round <= tournament.total_rounds,
+        'next_round_title': get_round_title(tournament, next_round) if next_round <= tournament.total_rounds else None,
+    }
     if request.session.get('extra'):
         dict.update(request.session['extra'])
     return render(request, 'tourney/pairing/main.html', dict)
@@ -182,14 +277,15 @@ def pairing_index(request):
 @user_passes_test(lambda u: u.is_staff)
 def edit_pairing(request, round_num):
     tournament = request.user.tournament
+    pairing_capacity = get_pairing_capacity(tournament, round_num)
     if DEBUG:
         RoundFormSet = inlineformset_factory(Pairing, Round, form=RoundForm, formset=PairingFormSet,
-                                             max_num=int(tournament.division_team_num/2), validate_max=True,
-                                             extra=int(tournament.division_team_num/2))
+                                             max_num=pairing_capacity, validate_max=True,
+                                             extra=pairing_capacity)
     else:
         RoundFormSet = inlineformset_factory(Pairing, Round, form=RoundForm, formset=PairingFormSet,
-                                             max_num=int(tournament.division_team_num/2), validate_max=True,
-                                             extra=int(tournament.division_team_num/2))
+                                             max_num=pairing_capacity, validate_max=True,
+                                             extra=pairing_capacity)
 
     if request.user.tournament.split_division:
         if not Pairing.objects.filter(round_num=round_num).exists():
@@ -322,6 +418,15 @@ def edit_pairing(request, round_num):
             pairing = Pairing.objects.get(
                 tournament=tournament, round_num=round_num)
 
+        if tournament.is_elim_round(round_num) and not pairing.rounds.exists():
+            for index, (p_team, d_team) in enumerate(build_elim_pairings(tournament, round_num), start=1):
+                Round.objects.create(
+                    pairing=pairing,
+                    p_team=p_team,
+                    d_team=d_team,
+                    courtroom=string.ascii_uppercase[index - 1],
+                )
+
         available_judges_pk = [judge.pk for judge in Judge.objects.filter(user__tournament=tournament)
                                if judge.get_availability(pairing.round_num)]
         judges = Judge.objects.filter(pk__in=available_judges_pk).order_by(
@@ -394,7 +499,8 @@ def edit_pairing(request, round_num):
         return render(request, 'tourney/pairing/edit.html', {'formsets': [formset],
                                                              'submit_forms': [submit_form],
                                                              'pairing': pairing,
-                                                             'judges': judges})
+                                                             'judges': judges,
+                                                             'round_title': get_round_title(tournament, round_num)})
 
 
 @user_passes_test(lambda u: u.is_staff)
@@ -1005,81 +1111,39 @@ amta_witnesses = {
 def load_sections(request):
     tournament = request.user.tournament
     if not Section.objects.filter(tournament=tournament).exists():
-        wit_nums = tournament.wit_nums
+        speaker_nums = tournament.wit_nums
         i = 1
-        openings = Section.objects.create(
-            name='Openings', tournament=tournament)
-        SubSection.objects.create(name=f'{tournament.p_choice} Opening',
-                                  section=openings,
-                                  side='P',
-                                  role='att',
-                                  type='statement',
-                                  help_text=f'{tournament.p_choice} Opening',
-                                  sequence=i)
-        SubSection.objects.create(name=f'Defense Opening',
-                                  section=openings,
-                                  side='D',
-                                  role='att',
-                                  type='statement',
-                                  help_text=f'Defense Opening',
-                                  sequence=i)
-        i += 1
         side_choices = {
             'P': tournament.p_choice,
-            'D': 'Defense'
+            'D': 'Respondent'
         }
         for side in ['P', 'D']:
-            for wit_num in range(1, wit_nums+1):
-
+            for speaker_num in range(1, speaker_nums + 1):
                 section = Section.objects.create(
-                    name=f'{side_choices[side]} Witness #{wit_num}', tournament=tournament)
-                SubSection.objects.create(name=f'{side} Wit {wit_num} Wit Direct',
-                                          section=section,
-                                          side=side,
-                                          role='wit',
-                                          type='direct',
-                                          help_text=f'Witness (Direct)',
-                                          sequence=i)
-                SubSection.objects.create(name=f'{side} Wit {wit_num} Att Direct',
+                    name=f'{side_choices[side]} Speaker {speaker_num}', tournament=tournament)
+                SubSection.objects.create(name=f'{side} Speaker {speaker_num} Content',
                                           section=section,
                                           side=side,
                                           role='att',
-                                          type='direct',
-                                          help_text=f'Directing Attorney',
+                                          type='statement',
+                                          help_text='Content of Argument',
                                           sequence=i)
-                i += 1
-                SubSection.objects.create(name=f'{side} Wit {wit_num} Wit Cross',
+                SubSection.objects.create(name=f'{side} Speaker {speaker_num} Extemporaneous',
                                           section=section,
                                           side=side,
-                                          role='wit',
-                                          type='cross',
-                                          help_text=f'Witness (Cross)',
-                                          sequence=i)
-                opposing_side = 'P' if side == 'D' else 'D'
-                SubSection.objects.create(name=f'{side} Wit {wit_num} Att Cross',
-                                          section=section,
-                                          side=opposing_side,
                                           role='att',
-                                          type='cross',
-                                          help_text=f'Crossing Attorney',
+                                          type='statement',
+                                          help_text='Extemporaneous Ability',
                                           sequence=i)
                 i += 1
-        closings = Section.objects.create(
-            name='Closings', tournament=tournament)
-        SubSection.objects.create(name=f'{tournament.p_choice} Closing',
-                                  section=closings,
-                                  side='P',
-                                  role='att',
-                                  type='statement',
-                                  help_text=f'{tournament.p_choice} Closing',
-                                  sequence=i)
-        SubSection.objects.create(name=f'Defense Closing',
-                                  section=closings,
-                                  side='D',
-                                  role='att',
-                                  type='statement',
-                                  help_text=f'Defense Closing',
-                                  sequence=i)
+                SubSection.objects.create(name=f'{side} Speaker {speaker_num} Forensics',
+                                          section=section,
+                                          side=side,
+                                          role='att',
+                                          type='statement',
+                                          help_text='Forensic Skill & Courtroom Demeanor',
+                                          sequence=i)
+                i += 1
     return redirect('index')
 
 

@@ -16,11 +16,13 @@ class BallotForm(forms.ModelForm):
     class Meta:
         model = Ballot
         fields = '__all__'
-        exclude = ['round','judge']
+        exclude = ['round', 'judge', 'att_rank_1', 'att_rank_2', 'att_rank_3', 'att_rank_4',
+                   'wit_rank_1', 'wit_rank_2', 'wit_rank_3', 'wit_rank_4']
 
     def __init__(self, *args, **kwargs):
         self.request = kwargs.pop("request")
         super(BallotForm, self).__init__(*args, **kwargs)
+        user_judge = getattr(self.request.user, "judge", None)
 
         # if self.instance.round.pairing.round_num == 5 or not self.instance.submit:
         for field in self.fields:
@@ -34,37 +36,13 @@ class BallotForm(forms.ModelForm):
             for field in self.fields:
                 self.fields[field].disabled = True
 
-        if self.request.user.is_judge and self.request.user.judge != self.instance.judge:
+        if self.request.user.is_judge and user_judge and user_judge != self.instance.judge:
             for field in self.fields:
                 self.fields[field].disabled = True
 
         if self.request.user.is_staff:
             for field in self.fields:
                 self.fields[field].disabled = False
-
-        if self.instance.round.captains_meeting.submit == True:
-            att_list = Competitor.objects.filter(pk__in=[att.pk for att in self.instance.round.captains_meeting.atts])
-            self.fields['att_rank_1'].queryset = att_list
-            self.fields['att_rank_2'].queryset = att_list
-            self.fields['att_rank_3'].queryset = att_list
-            self.fields['att_rank_4'].queryset = att_list
-            wit_list = Competitor.objects.filter(pk__in=[wit.pk for wit in self.instance.round.captains_meeting.wits])
-            self.fields['wit_rank_1'].queryset = wit_list
-            self.fields['wit_rank_2'].queryset = wit_list
-            self.fields['wit_rank_3'].queryset = wit_list
-            self.fields['wit_rank_4'].queryset = wit_list
-        else:
-            team_ids = [person.pk for person in Competitor.objects.filter(team=self.instance.round.p_team)] +\
-                [person.pk for person in Competitor.objects.filter(team=self.instance.round.d_team)]
-            individual_award_query = Competitor.objects.filter(pk__in=team_ids)
-            self.fields['att_rank_1'].queryset = individual_award_query
-            self.fields['att_rank_2'].queryset = individual_award_query
-            self.fields['att_rank_3'].queryset = individual_award_query
-            self.fields['att_rank_4'].queryset = individual_award_query
-            self.fields['wit_rank_1'].queryset = individual_award_query
-            self.fields['wit_rank_2'].queryset = individual_award_query
-            self.fields['wit_rank_3'].queryset = individual_award_query
-            self.fields['wit_rank_4'].queryset = individual_award_query
 
     def clean(self):
         cleaned_data = super().clean()
@@ -95,6 +73,7 @@ class BallotSectionForm(forms.ModelForm):
         self.init_ballot = kwargs.pop('ballot', None)
         self.init_subsection = kwargs.pop('subsection', None)
         super(BallotSectionForm, self).__init__(*args, **kwargs)
+        user_judge = getattr(self.request.user, "judge", None)
         if self.init_ballot:
             self.instance.ballot = self.init_ballot
         if self.init_subsection:
@@ -107,13 +86,27 @@ class BallotSectionForm(forms.ModelForm):
             for field in self.fields:
                 self.fields[field].disabled = True
 
-        if self.request.user.is_judge and self.request.user.judge != self.instance.ballot.judge:
+        if self.request.user.is_judge and user_judge and user_judge != self.instance.ballot.judge:
             for field in self.fields:
                 self.fields[field].disabled = True
 
         if self.request.user.is_staff:
             for field in self.fields:
                 self.fields[field].disabled = False
+
+        max_score = self.instance.subsection.max_score
+        self.fields['score'].widget = forms.Select(
+            choices=[(i, i) for i in range(max_score + 1)]
+        )
+
+    def clean_score(self):
+        score = self.cleaned_data.get('score')
+        subsection = self.instance.subsection
+        if score is not None and subsection and score > subsection.max_score:
+            raise ValidationError(
+                f"Score for {subsection.help_text} must be between 0 and {subsection.max_score}."
+            )
+        return score
 
 class CharacterPronounsForm(forms.ModelForm):
     class Meta:
@@ -209,7 +202,7 @@ class CaptainsMeetingForm(forms.ModelForm):
 class CaptainsMeetingSectionForm(forms.ModelForm):
     class Meta:
         model = CaptainsMeetingSection
-        fields = ['competitor','character']
+        fields = ['competitor']
 
     def __init__(self, *args, **kwargs):
         self.init_captains_meeting = kwargs.pop('captains_meeting', None)
@@ -227,17 +220,13 @@ class CaptainsMeetingSectionForm(forms.ModelForm):
             self.instance.subsection = self.init_subsection
 
         p_team_members = Competitor.objects.filter(team=self.init_captains_meeting.round.p_team)
-        p_characters = Character.objects.filter(tournament=tournament,side__in=['P','other'])
         d_team_members = Competitor.objects.filter(team=self.init_captains_meeting.round.d_team)
-        d_characters = Character.objects.filter(tournament=tournament, side__in=['D', 'other'])
 
 
         if self.init_subsection.side == 'P':
             self.fields['competitor'].queryset = p_team_members
-            self.fields['character'].queryset = p_characters
         else:
             self.fields['competitor'].queryset = d_team_members
-            self.fields['character'].queryset = d_characters
 
         if not self.init_captains_meeting.submit:
             for field in self.fields:
@@ -250,9 +239,6 @@ class CaptainsMeetingSectionForm(forms.ModelForm):
         if self.form.cleaned_data['submit'] == True:
             if cleaned_data.get('competitor') == None:
                 errors.append(f"{self.instance.subsection} competitor empty")
-            if self.instance.subsection.type == 'direct' and self.instance.subsection.role == 'wit' and \
-                cleaned_data.get('character') == None:
-                errors.append(f"{self.instance.subsection} character empty")
 
         if errors != []:
             raise ValidationError(errors)
@@ -282,4 +268,3 @@ class ParadigmPreferenceItemForm(forms.ModelForm):
             self.instance.paradigm = self.paradigm
         if self.paradigm_preference:
             self.instance.paradigm_preference = self.paradigm_preference
-

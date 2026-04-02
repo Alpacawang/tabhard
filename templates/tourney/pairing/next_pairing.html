@@ -5,42 +5,60 @@
 
 {% block content %}
 <div class="container-md">
-	<h2 class="pb-2">The next round is Round {{ next_round }}</h2>
+	<h2 class="pb-2">The next round is {{ next_round_title }}</h2>
 
 	{% for div, div_pairing in divs|zip:teams %}
 	<h3 class="pb-1">Division: {{ div }}</h3>
 			<table class="table table-striped table-bordered">
 				<thead class="table-dark">
-					<tr>
-						<th scope="col">{{ div }}</th>
-						<th colspan="4" scope="colgroup">Prosecution</th>
-						<th colspan="4" scope="colgroup">Defense</th>
-					</tr>
-					<tr>
-						<th scope="col">Rank</th>
-						<th>Name</th>
-						<th>Ballots</th>
-						<th>CS</th>
-						<th>PD</th>
-						<th>Name</th>
-						<th>Ballots</th>
-						<th>CS</th>
-						<th>PD</th>
-					</tr>
+					{% if is_elim %}
+						<tr>
+							<th scope="col">Seed</th>
+							<th>Petitioner</th>
+							<th>Seed</th>
+							<th>Respondent</th>
+						</tr>
+					{% else %}
+						<tr>
+							<th scope="col">{{ div }}</th>
+							<th colspan="4" scope="colgroup">Petitioner</th>
+							<th colspan="4" scope="colgroup">Respondent</th>
+						</tr>
+						<tr>
+							<th scope="col">Rank</th>
+							<th>Name</th>
+							<th>Ballots</th>
+							<th>CS</th>
+							<th>PD</th>
+							<th>Name</th>
+							<th>Ballots</th>
+							<th>CS</th>
+							<th>PD</th>
+						</tr>
+					{% endif %}
 				</thead>
 				<tbody>
 					{% for p_team, d_team in div_pairing %}
-						<tr>
-							<th scope="row">{{ forloop.counter }}</th>
-							<td>{{ p_team }}</td>
-							<td>{{ p_team.total_ballots }}</td>
-							<td>{{ p_team.total_cs }}</td>
-							<td>{{ p_team.total_pd }}</td>
-							<td>{{ d_team }}</td>
-							<td>{{ d_team.total_ballots }}</td>
-							<td>{{ d_team.total_cs }}</td>
-							<td>{{ d_team.total_pd }}</td>
-						</tr>
+						{% if is_elim %}
+							<tr>
+								<th scope="row">{{ forloop.counter }}</th>
+								<td>{{ p_team }}</td>
+								<td>{{ forloop.revcounter }}</td>
+								<td>{{ d_team }}</td>
+							</tr>
+						{% else %}
+							<tr>
+								<th scope="row">{{ forloop.counter }}</th>
+								<td>{{ p_team }}</td>
+								<td>{{ p_team.total_ballots }}</td>
+								<td>{{ p_team.total_cs }}</td>
+								<td>{{ p_team.total_pd }}</td>
+								<td>{{ d_team }}</td>
+								<td>{{ d_team.total_ballots }}</td>
+								<td>{{ d_team.total_cs }}</td>
+								<td>{{ d_team.total_pd }}</td>
+							</tr>
+						{% endif %}
 					{% endfor %}
 				</tbody>
 			</table>

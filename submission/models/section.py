@@ -43,12 +43,18 @@ class SubSection(models.Model):
     def __str__(self):
         return self.name
 
+    @property
+    def max_score(self):
+        if self.help_text in {'Content of Argument', 'Extemporaneous Ability'}:
+            return 20
+        return 10
+
 class BallotSection(models.Model):
     ballot =  models.ForeignKey(Ballot, on_delete=models.CASCADE, related_name='sections',
                                     related_query_name='section',null=True)
     subsection =  models.ForeignKey(SubSection, on_delete=models.CASCADE, related_name='ballot_sections',
                                     related_query_name='ballot_section',null=True)
-    score = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(10)])
+    score = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(20)])
     comment = models.TextField(max_length=5000, null=True, blank=True)
     #
     # def clean(self):
@@ -77,4 +83,3 @@ class CaptainsMeetingSection(models.Model):
 
         if errors != []:
             raise ValidationError(errors)
-

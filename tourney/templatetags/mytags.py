@@ -5,6 +5,7 @@ from django import template
 from itertools import chain
 
 from django.core.exceptions import ValidationError
+from tabeasy.utils.obfuscation import encode_int
 
 register = template.Library()
 
@@ -55,16 +56,7 @@ def get_character(subsection_list, section):
 
 @register.filter(name='int_str')
 def int_str(val):
-    keyspace = "fw59eorpma2nvxb07liqt83_u6kgzs41-ycdjh"
-    """ Turn a positive integer into a string. """
-    assert val >= 0
-    val = chaffify(val)
-    out = ""
-    while val > 0:
-        val, digit = divmod(val, len(keyspace))
-        out += keyspace[digit]
-
-    return out[::-1]
+    return encode_int(val)
 
 def chaffify(val, chaff_size = 150, chaff_modulus = 7):
     """ Add chaff to the given positive integer.

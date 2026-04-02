@@ -11,7 +11,7 @@
 {#	{% endfor %}#}
 
 	<div class="container-md center">
-			<h3>Edit Round {{ pairing.round_num }} Pairing</h3>
+			<h3>Edit {{ round_title|default:pairing }}</h3>
 			{% for formset in formsets %}
 				{% if formset.errors %}
 					{% for formerror in formset.errors %}
@@ -42,7 +42,7 @@
 								<thead class="table-light">
 									<tr>
 										<th scope="col">{{pairing.tournament.p_choice}} Team</th>
-										<th scope="col">Defense Team</th>
+										<th scope="col">Respondent Team</th>
 										<th scope="col">Presiding Judge</th>
 										<th scope="col">Scoring Judge</th>
 										<th scope="col">Extra Judge</th>
@@ -163,4 +163,3 @@
 {% block js %}
 	<script type="text/javascript" src="{% static 'js/form.js' %}"></script>
 {% endblock js %}
-

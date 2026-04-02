@@ -13,9 +13,12 @@
 		{% endif %}
 
 		<h1>Pairings</h1>
+			{% if next_round_title %}
+				<div class="mb-3">Next available round: {{ next_round_title }}</div>
+			{% endif %}
 			{% for pairing in pairings %}
 				<div class="m-4">
-					<h3>Round {{ pairing.0.round_num }}</h3>
+					<h3>{{ pairing.0 }}</h3>
 					{% for div_pairing in pairing %}
 						<div class="row gx-2 pb-3">
 							{% if pairing.division != None %}
@@ -27,7 +30,7 @@
 									<tr>
 										<th scope="col">Courtroom</th>
 										<th scope="col">{{user.tournament.p_choice}} Team</th>
-										<th scope="col">Defense Team</th>
+										<th scope="col">Respondent Team</th>
 										<th scope="col">Presiding Judge</th>
 										<th scope="col">Scoring Judge</th>
 										<th scope="col">Scoring Judge</th>
@@ -78,7 +81,7 @@
 
 				<div class="d-flex justify-content-center">
 					<a href="{% url 'tourney:edit_pairing' pairing.0.round_num %}">
-						<button type="button" class="button button-primary m-2">Edit Pairing {{ pairing.0.round_num }} Pairing</button>
+						<button type="button" class="button button-primary m-2">Edit {{ pairing.0 }}</button>
 					</a>
 {#					<a href="{% url 'tourney:delete_pairing' pairing.0.round_num %}">#}
 {#						<button type="button" class="button button-primary m-2">Delete Round {{ pairing.0.round_num }} Pairing</button>#}
@@ -89,17 +92,21 @@
 					<a href="{% url 'tourney:delete_pairing' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Are you sure you want to delete Pairing {{ pairing.0.round_num }}?');">Delete Pairing</button>
 					</a>
+					{% if pairing.0.round_num < user.tournament.total_rounds %}
 					<a href="{% url 'tourney:next_pairing' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2">(Tentative) Next Pairing</button>
 					</a>
+					{% endif %}
 
 				</div>
 			</div>
 			{% endfor %}
 
+	{% if can_add_pairing %}
 	<a href="{% url 'tourney:edit_pairing' next_round %}">
 		<button type="button" class="button button-primary">Add Pairing</button>
 	</a>
+	{% endif %}
 
 
 </div>

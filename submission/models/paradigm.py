@@ -18,7 +18,7 @@ judged_rounds_choices = [
 class Paradigm(models.Model):
     judge = models.OneToOneField('tourney.Judge', on_delete=models.CASCADE,
                                 primary_key=True, related_name='paradigm')
-    experience_years = models.DecimalField(default=0, max_digits=3, decimal_places=1, help_text='How many years of mock trial experience do you have?')
+    experience_years = models.DecimalField(default=0, max_digits=3, decimal_places=1, help_text='How many years of moot court experience do you have?')
     experience_description = ArrayField(
         models.CharField(max_length=40, choices=experience_description_choices, null=True,
                          help_text='Do you have any experience competing or judging in high school, collegiate or law school mock trial competitions?',
@@ -52,6 +52,5 @@ class ParadigmPreferenceItem(models.Model):
     paradigm_preference = models.ForeignKey(ParadigmPreference, on_delete=models.CASCADE, related_name='paradigm_preference_items',
                                    related_query_name='paradigm_preference_items', null=True)
     scale = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(10)],default=5)
-
 
 

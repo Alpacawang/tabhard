@@ -209,11 +209,7 @@ class CaptainsMeeting(models.Model):
             # for wit in self.wits:
             #     if wit in self.atts:
             #         errors.append(f"{wit} assigned as both an attorney and witness")
-
-            if not self.demo:
-                errors.append('You didn\'t check for demo')
+            pass
 
         if errors != []:
             raise ValidationError(errors)
-
-

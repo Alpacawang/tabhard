@@ -10,8 +10,8 @@ pronoun_choices = [
     ('ze','ze/hir')
 ]
 side_choices = [
-    ('P', 'Prosecution/Plaintiff'),
-    ('D', 'Defense'),
+    ('P', 'Petitioner'),
+    ('D', 'Respondent'),
     ('other','Swing'),
 ]
 

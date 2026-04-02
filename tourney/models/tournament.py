@@ -3,8 +3,14 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator, RegexValidator
 
 p_choices = [
-    ('Prosecution', 'Criminal'),
-    ('Plaintiff', 'Civil')
+    ('Petitioner', 'Petitioner'),
+]
+
+ELIM_BREAK_CHOICES = [
+    ('none', 'No Elimination Rounds'),
+    ('octas', 'Octas'),
+    ('quarters', 'Quarters'),
+    ('semis', 'Semis'),
 ]
 
 # def user_directory_path(instance, filename):
@@ -16,12 +22,23 @@ class Tournament(models.Model):
     name = models.CharField(max_length=40, help_text='Tournament Name:')
     short_name = models.CharField(max_length=10, help_text='Shortened Tournament Name:',
                                   validators=[RegexValidator(r'^[a-zA-Z0-9_-]+$', 'You can only enter alphanumerics, underscores, and dashes.')])
-    wit_nums = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(3)], default=3,
-                                   help_text='How many witnesses does each side call?')
+    wit_nums = models.IntegerField(validators=[MinValueValidator(2), MaxValueValidator(2)], default=2,
+                                   help_text='Moot court uses two speakers per side.')
+    prelim_rounds = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        default=4,
+        help_text='How many preliminary rounds should be tabbed before elimination rounds?',
+    )
+    elim_break = models.CharField(
+        max_length=20,
+        choices=ELIM_BREAK_CHOICES,
+        default='none',
+        help_text='How far should the break clear before finals?',
+    )
     rank_nums = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)], default=5,
-                                    help_text='How many competitors (attorneys/witnesses) do judges rank?')
+                                    help_text='How many competitors do judges rank?')
     p_choice = models.CharField(max_length=40, choices=p_choices,
-                                help_text='Is your case a Civil or Criminal case')
+                                help_text='Petitioner side label')
     publish_ballot_scores = models.BooleanField(default=False,
                                                 help_text='Do you want to publish ballot scores or just comments?')
     split_division = models.BooleanField(default=False)
@@ -49,3 +66,36 @@ class Tournament(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def elim_round_names(self):
+        mapping = {
+            'none': [],
+            'semis': ['Semis', 'Finals'],
+            'quarters': ['Quarters', 'Semis', 'Finals'],
+            'octas': ['Octas', 'Quarters', 'Semis', 'Finals'],
+        }
+        return mapping.get(self.elim_break, [])
+
+    @property
+    def total_rounds(self):
+        return self.prelim_rounds + len(self.elim_round_names)
+
+    def is_elim_round(self, round_num):
+        return round_num > self.prelim_rounds
+
+    def get_round_label(self, round_num):
+        if self.is_elim_round(round_num):
+            index = round_num - self.prelim_rounds - 1
+            if 0 <= index < len(self.elim_round_names):
+                return self.elim_round_names[index]
+        return f'Prelim {round_num}'
+
+    @property
+    def elim_break_size(self):
+        return {
+            'none': 0,
+            'semis': 4,
+            'quarters': 8,
+            'octas': 16,
+        }.get(self.elim_break, 0)

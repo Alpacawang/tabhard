@@ -4,7 +4,7 @@
 
 {% block content %}
 	<div class="container-md center">
-		<h3>Round {{ pairing.0.round_num }} Pairing</h3>
+		<h3>{{ pairing.0 }}</h3>
 
 		{% if pairing.0.team_submit %}
 			{% for div_pairing in pairing %}
@@ -17,8 +17,8 @@
 						<thead class="table-light">
 							<tr>
 								<th scope="col">Courtroom</th>
-								<th scope="col">Prosecution Team</th>
-								<th scope="col">Defense Team</th>
+								<th scope="col">Petitioner Team</th>
+								<th scope="col">Respondent Team</th>
 								{% if request.user.is_judge or request.user.is_staff  %}
 									<th scope="col">Presiding Judge</th>
 									<th scope="col">Scoring Judge</th>

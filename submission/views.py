@@ -4,6 +4,7 @@ from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
 from django.urls import reverse_lazy
 from django.views.generic import UpdateView
+import re
 
 from submission.forms import BallotForm, BallotSectionForm, CaptainsMeetingForm, CharacterPronounsForm, \
     CaptainsMeetingSectionForm, ParadigmForm, ParadigmPreferenceItemForm, SpiritForm
@@ -14,6 +15,7 @@ from submission.models.character import CharacterPronouns, Character
 from submission.models.paradigm import ParadigmPreference, ParadigmPreferenceItem, Paradigm
 from submission.models.section import BallotSection, Section, SubSection, CaptainsMeetingSection
 from tabeasy.utils.mixins import PassRequestToFormViewMixin
+from tabeasy.utils.obfuscation import decode_int
 from tourney.models import Judge
 from tourney.models.team import Team
 from django.contrib.auth.decorators import user_passes_test
@@ -21,7 +23,22 @@ from django.contrib.auth.decorators import user_passes_test
 try:
     from tabeasy_secrets.secret import str_int
 except ImportError:
-    str_int = int
+    str_int = decode_int
+
+
+def build_speaker_pairs(section_forms):
+    grouped = {}
+    for section_form in section_forms:
+        if not section_form:
+            continue
+        subsection = section_form[0].init_subsection
+        match = re.search(r"Speaker (\d+)", subsection.section.name)
+        if not match:
+            continue
+        speaker_num = int(match.group(1))
+        grouped.setdefault(speaker_num, {"speaker_num": speaker_num, "P": None, "D": None})
+        grouped[speaker_num][subsection.side] = section_form
+    return [grouped[key] for key in sorted(grouped)]
 
 
 class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFormViewMixin, UpdateView):
@@ -34,10 +51,11 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         self.ballot = get_object_or_404(Ballot, pk=str_int(self.kwargs['encrypted_pk']))
         if self.request.user.is_staff:
             return True
-        if self.request.user.is_judge and self.ballot.judge != self.request.user.judge:
+        user_judge = getattr(self.request.user, "judge", None)
+        if self.request.user.is_judge and user_judge and self.ballot.judge != user_judge:
             return False
-        if self.request.user.is_team and \
-            self.request.user.team not in self.ballot.round.teams:
+        user_team = getattr(self.request.user, "team", None)
+        if self.request.user.is_team and user_team and user_team not in self.ballot.round.teams:
             return False
         return True
 
@@ -71,6 +89,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
 
         context['section_forms'] = sorted(context['section_forms'],
                                     key= lambda x: x[0].init_subsection.sequence)
+        context['speaker_pairs'] = build_speaker_pairs(context['section_forms'])
         return context
 
     def post(self, request, *args, **kwargs):
@@ -125,6 +144,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
     def form_invalid(self, form, section_forms):
         context = self.get_context_data()
         context['section_forms'] = section_forms
+        context['speaker_pairs'] = build_speaker_pairs(section_forms)
         return self.render_to_response(context)
 
     def get_success_url(self):
@@ -152,10 +172,11 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
         self.captains_meeting = get_object_or_404(CaptainsMeeting, pk=str_int(self.kwargs['encrypted_pk']))
         if self.request.user.is_staff:
             return True
-        if self.request.user.is_team and self.request.user.team not in self.captains_meeting.round.teams:
+        user_team = getattr(self.request.user, "team", None)
+        if self.request.user.is_team and user_team and user_team not in self.captains_meeting.round.teams:
             return False
-        if self.request.user.is_judge and \
-                self.request.user.judge not in self.captains_meeting.round.judges:
+        user_judge = getattr(self.request.user, "judge", None)
+        if self.request.user.is_judge and user_judge and user_judge not in self.captains_meeting.round.judges:
             return False
         return True
 
@@ -164,16 +185,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        if CharacterPronouns.objects.filter(captains_meeting=self.object).exists():
-            context['pronouns_forms'] = [CharacterPronounsForm(instance=character_pronouns,
-                                                               character=character_pronouns.character, captains_meeting=self.object,
-                                                               prefix=character_pronouns.character.__str__())
-                                         for character_pronouns in
-                                         CharacterPronouns.objects.filter(captains_meeting=self.object).all()]
-        else:
-            context['pronouns_forms'] = [CharacterPronounsForm(character=character, captains_meeting=self.object,
-                                                               prefix=character.__str__())
-                                         for character in Character.objects.filter(tournament=self.object.round.pairing.tournament).all()]
+        context['pronouns_forms'] = []
 
         context['section_forms'] = []
         if CaptainsMeetingSection.objects.filter(captains_meeting=self.object).exists():
@@ -181,8 +193,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
                 temp = []
                 for subsection in CaptainsMeetingSection.objects.filter(captains_meeting=self.object,
                                                           subsection__section=section).all():
-                    if not (subsection.subsection.type == 'cross' and \
-                        subsection.subsection.role == 'wit'):
+                    if subsection.subsection.sequence == section.subsections.order_by('sequence').first().sequence:
                         temp.append(
                             CaptainsMeetingSectionForm(instance=subsection,
                                                        captains_meeting=self.object,
@@ -196,8 +207,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
                 for subsection in SubSection.objects.filter(section=section).all():
-                    if not (subsection.type == 'cross' and \
-                            subsection.role == 'wit'):
+                    if subsection.sequence == section.subsections.order_by('sequence').first().sequence:
                         temp.append(
                             CaptainsMeetingSectionForm(subsection=subsection, captains_meeting=self.object,
                                           prefix=subsection.__str__(), request=self.request)
@@ -214,18 +224,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
             return HttpResponseForbidden()
         self.object = self.get_object()
         form = self.get_form()
-        if CharacterPronouns.objects.filter(captains_meeting=self.object).exists():
-            pronouns_forms = [CharacterPronounsForm(request.POST, instance=character_pronouns,
-                                                    character=character_pronouns.character,
-                                                    captains_meeting=self.object,
-                                                    prefix=character_pronouns.character.__str__(),
-                                                    form=form)
-                              for character_pronouns in
-                              CharacterPronouns.objects.filter(captains_meeting=self.object).all()]
-        else:
-            pronouns_forms = [CharacterPronounsForm(request.POST, character=character, captains_meeting=self.object,
-                                                    prefix=character.__str__(), form=form)
-                              for character in Character.objects.filter(tournament=self.object.round.pairing.tournament)]
+        pronouns_forms = []
 
 
         section_forms = []
@@ -234,8 +233,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
                 temp = []
                 for subsection in CaptainsMeetingSection.objects.filter(captains_meeting=self.object,
                                                                            subsection__section=section).all():
-                    if not (subsection.subsection.type == 'cross' and \
-                        subsection.subsection.role == 'wit'):
+                    if subsection.subsection.sequence == section.subsections.order_by('sequence').first().sequence:
                         temp.append(
                             CaptainsMeetingSectionForm(request.POST, instance=subsection,
                                                        captains_meeting=self.object,
@@ -249,8 +247,7 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
                 for subsection in SubSection.objects.filter(section=section).all():
-                    if not (subsection.type == 'cross' and \
-                            subsection.role == 'wit'):
+                    if subsection.sequence == section.subsections.order_by('sequence').first().sequence:
                         temp.append(
                             CaptainsMeetingSectionForm(request.POST, subsection=subsection,
                                                        captains_meeting=self.object,
@@ -267,75 +264,18 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
 
         if not form.is_valid():
             is_valid = False
-
-        for pronouns_form in pronouns_forms:
-            if not pronouns_form.is_valid():
-                is_valid = False
-
-        characters = []
-        wits = []
-        direct_atts = []
-        cross_atts = []
         speeches = []
         for section in section_forms:
             for subsection_form in section:
                 if not subsection_form.is_valid():
                     is_valid = False
                 elif form.cleaned_data.get('submit'):
-                    #check for character
-                    character = subsection_form.cleaned_data.get('character')
-                    if character in characters:
+                    competitor = subsection_form.cleaned_data.get('competitor')
+                    if competitor in speeches:
                         is_valid = False
-                        subsection_form.errors['character'] = "Each witness can only be called once."
-                    elif character:
-                        characters.append(character)
-
-                    if subsection_form.instance.subsection.role == 'wit' and \
-                        subsection_form.instance.subsection.type == 'direct':
-                        competitor = subsection_form.cleaned_data.get('competitor')
-                        if competitor in wits:
-                            is_valid = False
-                            subsection_form.errors['wits'] = f"{competitor} is portraying two witnesses."
-                        elif competitor:
-                            wits.append(competitor)
-
-                    if subsection_form.instance.subsection.role == 'att' and \
-                            subsection_form.instance.subsection.type == 'direct':
-                        competitor = subsection_form.cleaned_data.get('competitor')
-                        if competitor in direct_atts:
-                            is_valid = False
-                            subsection_form.errors['direct_atts'] = f"{competitor} is doing two directs."
-                        elif competitor:
-                            direct_atts.append(competitor)
-
-                    if subsection_form.instance.subsection.role == 'att' and \
-                            subsection_form.instance.subsection.type == 'cross':
-                        competitor = subsection_form.cleaned_data.get('competitor')
-                        if competitor in cross_atts:
-                            is_valid = False
-                            subsection_form.errors['cross_atts'] = f"{competitor} is doing two crosses."
-                        elif competitor:
-                            cross_atts.append(competitor)
-
-                    if subsection_form.instance.subsection.role == 'att' and \
-                            subsection_form.instance.subsection.type == 'statement':
-                        competitor = subsection_form.cleaned_data.get('competitor')
-                        if competitor in speeches:
-                            is_valid = False
-                            subsection_form.errors['speeches'] = f"{competitor} is doing both opening and closing."
-                        elif competitor:
-                            speeches.append(competitor)
-
-        if form.cleaned_data.get('submit'):
-            if direct_atts and cross_atts and \
-                sorted(direct_atts) != sorted(cross_atts):
-                is_valid = False
-                section_forms[0][0].errors['atts_num'] = 'The crossing attorneys and directing attorneys have a mismatch.'
-            for wit in wits:
-                if wit in direct_atts or wit in cross_atts:
-                    is_valid = False
-                    section_forms[0][0].errors[
-                        'att_n_wit'] = f'{wit} assigned as both an attorney and witness.'
+                        subsection_form.errors['speeches'] = f"{competitor} is assigned to more than one speaker slot."
+                    elif competitor:
+                        speeches.append(competitor)
 
 
         if is_valid:
@@ -344,32 +284,16 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
             return self.form_invalid(form, pronouns_forms, section_forms)
 
     def form_valid(self, form, pronouns_forms, section_forms):
-        for pronouns_form in pronouns_forms:
-            # pronouns_form.instance.captains_meeting = self.object
-            pronouns_form.save()
         for section in section_forms:
             for subsection_form in section:
                 subsection_form.save()
-
-                if subsection_form.init_subsection.role == 'wit' and \
-                        subsection_form.init_subsection.type == 'direct':
-                    subsection = SubSection.objects.get(section=subsection_form.init_subsection.section,
-                                                        role=subsection_form.init_subsection.role,
-                                                        type='cross')
-                    if CaptainsMeetingSection.objects.filter(captains_meeting=subsection_form.init_captains_meeting,
-                                                             subsection=subsection
-                                                             ).exists():
-                        CaptainsMeetingSection.objects.filter(captains_meeting=subsection_form.init_captains_meeting,
-                                                              subsection=subsection
-                                                              ).update(competitor=subsection_form.instance.competitor,
-                                                                       character=subsection_form.instance.character)
-                    else:
-                        CaptainsMeetingSection.objects.create(
-                            captains_meeting=subsection_form.init_captains_meeting,
-                            subsection=subsection,
-                            competitor=subsection_form.instance.competitor,
-                            character=subsection_form.instance.character
-                        )
+                competitor = subsection_form.instance.competitor
+                for subsection in subsection_form.init_subsection.section.subsections.exclude(pk=subsection_form.init_subsection.pk):
+                    CaptainsMeetingSection.objects.update_or_create(
+                        captains_meeting=subsection_form.init_captains_meeting,
+                        subsection=subsection,
+                        defaults={"competitor": competitor},
+                    )
 
         return super().form_valid(form)
 

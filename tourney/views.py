@@ -22,7 +22,6 @@ from submission.models.section import Section, SubSection
 from submission.models.spirit import Spirit
 from tabeasy.settings import DEBUG
 from tabeasy.utils.mixins import JudgeOnlyMixin, PassRequestToFormViewMixin, TabOnlyMixin
-from tabeasy_secrets.secret import str_int
 from tourney.forms import RoundForm, UpdateConflictForm, UpdateJudgeFriendForm, PairingFormSet, PairingSubmitForm, \
     JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CompetitorForm, TeamForm
 from submission.models.ballot import Ballot
@@ -32,6 +31,11 @@ from tourney.models.judge import Judge
 from tourney.models.round import Round, Pairing
 from tourney.models.team import Team
 from tourney.models.competitor import Competitor
+
+try:
+    from tabeasy_secrets.secret import str_int
+except ImportError:
+    str_int = int
 
 
 def sort_teams(teams):

@@ -1,0 +1,1 @@
+default_app_config = "django_better_admin_arrayfield.apps.DjangoBetterAdminArrayFieldConfig"

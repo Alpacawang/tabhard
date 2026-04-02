@@ -2,9 +2,13 @@ from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ValidationError
 from accounts.models import User
-from tabeasy_secrets.secret import JUDGE_VERIFICATION_CODE
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import RegexValidator
+
+try:
+    from tabeasy_secrets.secret import JUDGE_VERIFICATION_CODE
+except ImportError:
+    JUDGE_VERIFICATION_CODE = ""
 
 
 class SignUpForm(UserCreationForm):
@@ -43,4 +47,3 @@ class UserTournamentForm(forms.ModelForm):
         fields = ['tournament']
         exclude = ['split_division', 'rank_nums', 'conflict_other_side']
     
-

@@ -1,8 +1,8 @@
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 
 # from tabeasy_secrets.secret import TOURNAMENT
-from rest_framework.exceptions import ValidationError
 
 from submission.models.ballot import Ballot
 from submission.models.captains_meeting import CaptainsMeeting
@@ -77,5 +77,4 @@ class CaptainsMeetingSection(models.Model):
 
         if errors != []:
             raise ValidationError(errors)
-
 

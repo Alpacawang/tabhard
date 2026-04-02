@@ -233,8 +233,12 @@ class CustomModelChoiceField(forms.ModelMultipleChoiceField):
         if hasattr(self, '_choices'):
             return self._choices
         return CustomModelChoiceIterator(self)
-    choices = property(_get_choices,
-                       MultipleChoiceField._set_choices)
+
+    def _set_choices(self, value):
+        self._choices = value
+        self.widget.choices = value
+
+    choices = property(_get_choices, _set_choices)
 
 class UpdateConflictForm(forms.ModelForm):
     class Meta:
@@ -291,4 +295,3 @@ class CompetitorPronounsForm(forms.ModelForm):
     class Meta:
         model = Competitor
         fields = ['pronouns']
-

@@ -14,10 +14,14 @@ from submission.models.character import CharacterPronouns, Character
 from submission.models.paradigm import ParadigmPreference, ParadigmPreferenceItem, Paradigm
 from submission.models.section import BallotSection, Section, SubSection, CaptainsMeetingSection
 from tabeasy.utils.mixins import PassRequestToFormViewMixin
-from tabeasy_secrets.secret import str_int
 from tourney.models import Judge
 from tourney.models.team import Team
 from django.contrib.auth.decorators import user_passes_test
+
+try:
+    from tabeasy_secrets.secret import str_int
+except ImportError:
+    str_int = int
 
 
 class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFormViewMixin, UpdateView):
@@ -464,4 +468,3 @@ def edit_paradigm(request, judge):
     return render(request, 'tourney/paradigm.html', {'judge': judge,
                                                      'paradigm_form':paradigm_form,
                                                      'forms': paradigm_preference_item_forms})
-

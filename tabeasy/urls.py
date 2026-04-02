@@ -13,12 +13,11 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
-from django.conf.urls import url
 from django.views.generic.base import RedirectView
 from django.contrib import admin
 from django.conf.urls.static import static
 from django.conf import settings
-from django.urls import include, path
+from django.urls import include, path, re_path
 from ajax_select import urls as ajax_select_urls
 
 from tourney import views
@@ -37,5 +36,5 @@ urlpatterns = [
     path('load_amta_witnesses', views.load_amta_witnesses),
     path('load_paradigms', views.load_paradigms),
     path('donate', views.donate, name='donate'),
-    url(r'^ajax_select/', include(ajax_select_urls)),
+    re_path(r"^ajax_select/", include(ajax_select_urls)),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

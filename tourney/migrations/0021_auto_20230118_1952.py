@@ -13,13 +13,36 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='team',
-            name='team_id',
-        ),
-        migrations.AlterField(
-            model_name='team',
-            name='user',
-            field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='team', serialize=False, to='accounts.user'),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql=[
+                        "ALTER TABLE tourney_judge_conflicts DROP CONSTRAINT IF EXISTS tourney_judge_conflicts_team_id_b2c7635a_fk;",
+                        "ALTER TABLE tourney_competitor DROP CONSTRAINT IF EXISTS tourney_competitor_team_id_4648cca1_fk;",
+                        "ALTER TABLE tourney_round DROP CONSTRAINT IF EXISTS tourney_round_d_team_id_c58c6807_fk;",
+                        "ALTER TABLE tourney_round DROP CONSTRAINT IF EXISTS tourney_round_p_team_id_62bb8a93_fk;",
+                        "ALTER TABLE tourney_team DROP CONSTRAINT IF EXISTS tourney_team_pkey;",
+                        "ALTER TABLE tourney_team ALTER COLUMN user_id SET NOT NULL;",
+                        "ALTER TABLE tourney_team DROP COLUMN IF EXISTS team_id;",
+                        "ALTER TABLE tourney_team ADD PRIMARY KEY (user_id);",
+                        "ALTER TABLE tourney_judge_conflicts ADD CONSTRAINT tourney_judge_conflicts_team_id_b2c7635a_fk FOREIGN KEY (team_id) REFERENCES tourney_team (user_id) DEFERRABLE INITIALLY DEFERRED;",
+                        "ALTER TABLE tourney_competitor ADD CONSTRAINT tourney_competitor_team_id_4648cca1_fk FOREIGN KEY (team_id) REFERENCES tourney_team (user_id) DEFERRABLE INITIALLY DEFERRED;",
+                        "ALTER TABLE tourney_round ADD CONSTRAINT tourney_round_d_team_id_c58c6807_fk FOREIGN KEY (d_team_id) REFERENCES tourney_team (user_id) DEFERRABLE INITIALLY DEFERRED;",
+                        "ALTER TABLE tourney_round ADD CONSTRAINT tourney_round_p_team_id_62bb8a93_fk FOREIGN KEY (p_team_id) REFERENCES tourney_team (user_id) DEFERRABLE INITIALLY DEFERRED;",
+                    ],
+                    reverse_sql=migrations.RunSQL.noop,
+                ),
+            ],
+            state_operations=[
+                migrations.RemoveField(
+                    model_name='team',
+                    name='team_id',
+                ),
+                migrations.AlterField(
+                    model_name='team',
+                    name='user',
+                    field=models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, primary_key=True, related_name='team', serialize=False, to='accounts.user'),
+                ),
+            ],
         ),
     ]

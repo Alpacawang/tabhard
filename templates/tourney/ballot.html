@@ -168,12 +168,12 @@
 													</div>
 													{% if not forloop.first %}{{ subsection_form.comment.as_hidden }}{% endif %}
 												{% endfor %}
-												{% if not request.user.tournament.hide_comments %}
-													<div class="mt-3">
-														<div class="p-1">Comments:</div>
-														{{ pair.P.0.comment }}
-													</div>
-												{% endif %}
+									{% if not request.user.tournament.hide_comments %}
+										<div class="mt-3">
+											<div class="p-1">Comments:</div>
+											{% render_field pair.P.0.comment class="form-control w-100" rows="4" style="max-width:100%; box-sizing:border-box;" %}
+										</div>
+									{% endif %}
 											{% endif %}
 										</div>
 									</div>
@@ -204,12 +204,12 @@
 													</div>
 													{% if not forloop.first %}{{ subsection_form.comment.as_hidden }}{% endif %}
 												{% endfor %}
-												{% if not request.user.tournament.hide_comments %}
-													<div class="mt-3">
-														<div class="p-1">Comments:</div>
-														{{ pair.D.0.comment }}
-													</div>
-												{% endif %}
+									{% if not request.user.tournament.hide_comments %}
+										<div class="mt-3">
+											<div class="p-1">Comments:</div>
+											{% render_field pair.D.0.comment class="form-control w-100" rows="4" style="max-width:100%; box-sizing:border-box;" %}
+										</div>
+									{% endif %}
 											{% endif %}
 										</div>
 									</div>

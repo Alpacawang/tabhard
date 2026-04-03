@@ -9,56 +9,25 @@
 		<table class="table table-striped table-bordered">
 			<thead class="table-light">
 				<tr>
-					<th scope="col"></th>
-					{% if request.user.tournament.split_division %}
-						<th colspan="5" scope="colgroup">Attorneys</th>
-						<th colspan="5" scope="colgroup">Witnesses</th>
-					{% else %}
-						<th colspan="4" scope="colgroup">Attorneys</th>
-						<th colspan="4" scope="colgroup">Witnesses</th>
-					{% endif %}
-				</tr>
-				<tr>
 					<th scope="col">#</th>
 					<th>Name</th>
-					<th>Ranks</th>
-					<th>Team</th>
-					<th>Side</th>
-					{% if request.user.tournament.split_division %}
-						<th>Division</th>
-					{% endif %}
-					<th>Name</th>
-					<th>Ranks</th>
+					<th>Total Score</th>
 					<th>Team</th>
 					{% if request.user.tournament.split_division %}
 						<th>Division</th>
 					{% endif %}
-					<th>Side</th>
 				</tr>
 			</thead>
 			<tbody>
-				{% for att, wit in ranked %}
+				{% for competitor, score in ranked %}
 					<tr>
 						<th scope="row">{{ forloop.counter }}</th>
-						<td>{{ att.0 }}</td>
-						<td>
-								{{ att.2 }}
-						</td>
-						<td>{{ att.0.team }}</td>
+						<td>{{ competitor }}</td>
+						<td>{{ score }}</td>
+						<td>{{ competitor.team }}</td>
 						{% if request.user.tournament.split_division %}
-							<td>{{ att.0.team.division }}</td>
+							<td>{{ competitor.team.division }}</td>
 						{% endif %}
-
-						<td>{{ att.1 }}</td>
-						<td>{{ wit.0 }}</td>
-						<td>
-							{{ wit.2 }}
-						</td>
-						<td>{{ wit.0.team }}</td>
-						{% if request.user.tournament.split_division %}
-							<td>{{ wit.0.team.division }}</td>
-						{% endif %}
-						<td>{{ wit.1 }}</td>
 					</tr>
 				{% endfor %}
 			</tbody>

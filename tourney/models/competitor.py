@@ -16,6 +16,7 @@ class Competitor(models.Model):
     d_att = models.IntegerField(default=0)
     p_wit = models.IntegerField(default=0)
     d_wit = models.IntegerField(default=0)
+    total_score = models.IntegerField(default=0)
 
 
     def __str__(self):
@@ -76,6 +77,9 @@ class Competitor(models.Model):
         self.p_wit = p_total
         self.d_wit = d_total
 
+    def calc_total_score(self):
+        self.total_score = self.p_att + self.d_att + self.p_wit + self.d_wit
+
     def __lt__(self, other):
         return self.id < other.id
 
@@ -83,6 +87,14 @@ class Competitor(models.Model):
         ordering = ['id']
 
     def save(self, *args, **kwargs):
+        if self.pk is None:
+            super().save(*args, **kwargs)
+            self.calc_wit_individual_score()
+            self.calc_att_individual_score()
+            self.calc_total_score()
+            super().save(update_fields=['p_att', 'd_att', 'p_wit', 'd_wit', 'total_score'])
+            return
         self.calc_wit_individual_score()
         self.calc_att_individual_score()
+        self.calc_total_score()
         super().save(*args, **kwargs)

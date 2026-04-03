@@ -10,11 +10,11 @@ from accounts.forms import *
 from tourney.forms import JudgeForm, TeamForm
 from tourney.models import Judge, Team, Competitor
 from django.views.generic import UpdateView
-from tourney.forms import TournamentForm
+from tourney.forms import TournamentForm, CreateTournamentForm
 
 
 def get_team_competitor_formset(tournament, include_team_header=False):
-    competitor_slots = max(1, tournament.wit_nums)
+    competitor_slots = max(1, tournament.team_size)
     return inlineformset_factory(
         Team,
         Competitor,
@@ -130,7 +130,7 @@ class DoneChangePassword(auth_views.PasswordChangeDoneView):
 
 def create_tournament(request):
     if request.method == 'POST':
-        form = TournamentForm(data=request.POST)
+        form = CreateTournamentForm(data=request.POST)
         if form.is_valid():
             tournament = form.save()
             user = request.user
@@ -139,7 +139,7 @@ def create_tournament(request):
 
             return redirect('load_sections')
     else:   
-        form = TournamentForm()
+        form = CreateTournamentForm()
    
     return render(request,
             'utils/generic_form_help_text.html',

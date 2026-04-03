@@ -22,15 +22,28 @@ ELIM_BREAK_CHOICES = [
 
 
 class Tournament(models.Model):
+    team_size_choices = [
+        (2, '2-person teams'),
+        (3, '3-person teams'),
+    ]
     name = models.CharField(max_length=40, help_text='Tournament Name:')
     short_name = models.CharField(max_length=10, help_text='Shortened Tournament Name:',
                                   validators=[RegexValidator(r'^[a-zA-Z0-9_-]+$', 'You can only enter alphanumerics, underscores, and dashes.')])
     wit_nums = models.IntegerField(validators=[MinValueValidator(2), MaxValueValidator(2)], default=2,
                                    help_text='Moot court uses two speakers per side.')
+    team_size = models.IntegerField(
+        choices=team_size_choices,
+        default=2,
+        help_text='How many competitors may each team roster?',
+    )
     prelim_rounds = models.IntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(4)],
         default=4,
         help_text='How many preliminary rounds should be tabbed before elimination rounds?',
+    )
+    randomize_prelims = models.BooleanField(
+        default=False,
+        help_text='Should Tabhard auto-generate all preliminary pairings and judges?',
     )
     elim_break = models.CharField(
         max_length=20,

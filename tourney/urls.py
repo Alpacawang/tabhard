@@ -11,6 +11,7 @@ urlpatterns = [
     path('pairing/edit/<int:round_num>', views.edit_pairing, name='edit_pairing'),
     path('pairing/delete/<int:round_num>', views.delete_pairing, name='delete_pairing'),
     path('pairing/next_pairing/<int:round_num>', views.next_pairing, name='next_pairing'),
+    path('pairing/generate_prelims', views.generate_prelim_pairings, name='generate_prelim_pairings'),
     path('checkin_judges/<int:round_num>', views.checkin_judges, name='checkin_judges'),
     path('clear_checkin/', views.clear_checkin, name='clear_checkin'),
     path('checkin_all_judges/<int:round_num>', views.checkin_all_judges, name='checkin_all_judges'),

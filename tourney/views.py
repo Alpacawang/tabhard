@@ -1,6 +1,7 @@
 import random
 import re
 import string
+from collections import defaultdict
 import openpyxl
 from django.contrib.auth.decorators import user_passes_test, login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
@@ -34,7 +35,7 @@ from tourney.models.competitor import Competitor
 
 
 def get_team_competitor_formset(tournament):
-    competitor_slots = max(1, tournament.wit_nums)
+    competitor_slots = max(1, tournament.team_size)
     return inlineformset_factory(
         Team,
         Competitor,
@@ -160,6 +161,233 @@ def build_prelim_pairings(tournament, round_num, division=None):
             p_teams.append(teams[i + 1])
             d_teams.append(teams[i])
     return list(zip(p_teams, d_teams))
+
+
+def get_group_teams_for_pairing(tournament, division=None):
+    queryset = Team.objects.filter(user__tournament=tournament)
+    if division:
+        queryset = queryset.filter(division=division)
+    teams = list(queryset.order_by('team_name'))
+    return teams
+
+
+def get_side_targets(teams, prelim_rounds):
+    base_target = prelim_rounds // 2
+    extra_p_slots = prelim_rounds * (len(teams) // 2) - base_target * len(teams)
+    shuffled = teams[:]
+    random.shuffle(shuffled)
+    targets = {team.pk: base_target for team in teams}
+    for team in shuffled[:extra_p_slots]:
+        targets[team.pk] += 1
+    return targets
+
+
+def choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_rounds):
+    petitioner_slots = len(teams) // 2
+    remaining_rounds = prelim_rounds - round_num + 1
+    must_petitioner = [
+        team for team in teams
+        if side_targets[team.pk] - side_counts[team.pk] >= remaining_rounds
+    ]
+    if len(must_petitioner) > petitioner_slots:
+        return None
+    eligible = [team for team in teams if side_counts[team.pk] < side_targets[team.pk] and team not in must_petitioner]
+    random.shuffle(eligible)
+    petitioner_teams = must_petitioner[:]
+    petitioner_teams.extend(eligible[: petitioner_slots - len(must_petitioner)])
+    if len(petitioner_teams) != petitioner_slots:
+        return None
+    respondents = [team for team in teams if team not in petitioner_teams]
+    for team in respondents:
+        if side_targets[team.pk] - side_counts[team.pk] > remaining_rounds - 1:
+            return None
+    return petitioner_teams, respondents
+
+
+def pairing_penalty(p_team, d_team, seen_matchups):
+    penalty = 0
+    if p_team.school and d_team.school and p_team.school == d_team.school:
+        penalty += 1000
+    if frozenset((p_team.pk, d_team.pk)) in seen_matchups:
+        penalty += 100
+    return penalty
+
+
+def match_round_teams(p_teams, d_teams, seen_matchups, attempts=250):
+    best_pairs = None
+    best_penalty = None
+    p_teams = p_teams[:]
+    d_teams = d_teams[:]
+    for _ in range(attempts):
+        random.shuffle(p_teams)
+        random.shuffle(d_teams)
+        pairs = list(zip(p_teams, d_teams))
+        penalty = sum(pairing_penalty(p_team, d_team, seen_matchups) for p_team, d_team in pairs)
+        if best_penalty is None or penalty < best_penalty:
+            best_pairs = pairs[:]
+            best_penalty = penalty
+        if penalty == 0:
+            break
+    return best_pairs, best_penalty
+
+
+def build_random_prelim_schedule(teams, prelim_rounds):
+    if len(teams) % 2 != 0:
+        return None, ['Auto-generation requires an even number of teams in each pairing pool.']
+    if len(teams) < 2:
+        return None, ['Not enough teams to generate preliminary rounds.']
+
+    for _ in range(300):
+        side_targets = get_side_targets(teams, prelim_rounds)
+        side_counts = defaultdict(int)
+        seen_matchups = set()
+        schedule = []
+        failed = False
+        for round_num in range(1, prelim_rounds + 1):
+            side_split = choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_rounds)
+            if not side_split:
+                failed = True
+                break
+            petitioner_teams, respondent_teams = side_split
+            pairs, penalty = match_round_teams(petitioner_teams, respondent_teams, seen_matchups)
+            if not pairs:
+                failed = True
+                break
+            schedule.append(pairs)
+            for p_team, d_team in pairs:
+                side_counts[p_team.pk] += 1
+                seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
+        if not failed:
+            return schedule, []
+    return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.']
+
+
+def judge_preside_rank(judge):
+    if judge.preside == 1:
+        return 2
+    if judge.preside == 2:
+        return 1
+    return 0
+
+
+def judge_can_cover_round(judge, round_obj, round_num, used_judges):
+    if judge in used_judges:
+        return False
+    if not judge.get_availability(round_num):
+        return False
+    for team in round_obj.teams:
+        if team in judge.conflicts.all():
+            return False
+    p_judged, d_judged = judge.judged(round_num)
+    if round_obj.p_team in p_judged:
+        return False
+    if round_obj.d_team in d_judged:
+        return False
+    if round_obj.pairing.tournament.conflict_other_side:
+        if round_obj.p_team in d_judged or round_obj.d_team in p_judged:
+            return False
+    return True
+
+
+def assign_judges_for_rounds(tournament, round_num, round_objects):
+    target_judges = max(tournament.judges, tournament.required_judges)
+    target_judges = min(target_judges, tournament.get_max_judges_for_round(round_num))
+    available = list(Judge.objects.filter(user__tournament=tournament))
+    checked_in = [judge for judge in available if judge.checkin and judge.get_availability(round_num)]
+    judge_pool = checked_in if checked_in else [judge for judge in available if judge.get_availability(round_num)]
+    judge_pool = sorted(judge_pool, key=lambda judge: (-judge_preside_rank(judge), judge.user.username))
+    used_judges = set()
+
+    for round_obj in round_objects:
+        valid_presiding = [judge for judge in judge_pool if judge_can_cover_round(judge, round_obj, round_num, used_judges) and judge.preside > 0]
+        if not valid_presiding:
+            return False
+        round_obj.presiding_judge = valid_presiding[0]
+        used_judges.add(valid_presiding[0])
+
+        scoring_candidates = [judge for judge in judge_pool if judge_can_cover_round(judge, round_obj, round_num, used_judges)]
+        needed_scoring = max(0, target_judges - 1)
+        if len(scoring_candidates) < needed_scoring:
+            return False
+        selected = scoring_candidates[:needed_scoring]
+        round_obj.scoring_judge = selected[0] if needed_scoring >= 1 else None
+        round_obj.extra_judge = selected[1] if needed_scoring >= 2 else None
+        for judge in selected:
+            used_judges.add(judge)
+    return True
+
+
+def get_pairing_letters(division, count):
+    if division == 'Universal':
+        letters = string.ascii_uppercase[8:16]
+    else:
+        letters = string.ascii_uppercase[:8]
+    return letters[:count]
+
+
+@user_passes_test(lambda u: u.is_staff)
+def generate_prelim_pairings(request):
+    tournament = request.user.tournament
+    if not tournament.randomize_prelims:
+        request.session['extra'] = {'errors': ['Random preliminary generation is turned off in tournament settings.']}
+        return redirect('tourney:pairing_index')
+    if Pairing.objects.filter(tournament=tournament).exists():
+        request.session['extra'] = {'errors': ['Delete existing pairings before generating all preliminary rounds automatically.']}
+        return redirect('tourney:pairing_index')
+
+    divisions = ['Disney', 'Universal'] if tournament.split_division else [None]
+    schedules = {}
+    errors = []
+    for division in divisions:
+        teams = get_group_teams_for_pairing(tournament, division)
+        schedule, schedule_errors = build_random_prelim_schedule(teams, tournament.prelim_rounds)
+        if schedule_errors:
+            errors.extend(schedule_errors if division is None else [f'{division}: {error}' for error in schedule_errors])
+        else:
+            schedules[division] = schedule
+    if errors:
+        request.session['extra'] = {'errors': errors + ['Please create or edit pairings manually.']}
+        return redirect('tourney:pairing_index')
+
+    try:
+        with transaction.atomic():
+            for round_num in range(1, tournament.prelim_rounds + 1):
+                round_objects = []
+                pairings_for_round = []
+                for division in divisions:
+                    pairing = Pairing.objects.create(
+                        tournament=tournament,
+                        round_num=round_num,
+                        division=division,
+                        team_submit=True,
+                        final_submit=False,
+                    )
+                    pairings_for_round.append(pairing)
+                    letters = get_pairing_letters(division, len(schedules[division][round_num - 1]))
+                    for index, (p_team, d_team) in enumerate(schedules[division][round_num - 1]):
+                        round_obj = Round.objects.create(
+                            pairing=pairing,
+                            p_team=p_team,
+                            d_team=d_team,
+                            courtroom=letters[index],
+                        )
+                        round_objects.append(round_obj)
+
+                if not assign_judges_for_rounds(tournament, round_num, round_objects):
+                    raise ValidationError(f'Unable to auto-assign judges for {tournament.get_round_label(round_num)}.')
+
+                for round_obj in round_objects:
+                    round_obj.save()
+                for pairing in pairings_for_round:
+                    pairing.final_submit = True
+                    pairing.save(update_fields=['final_submit'])
+                    sync_ballots_for_pairing(pairing)
+    except ValidationError as exc:
+        request.session['extra'] = {'errors': [str(exc), 'Please edit pairings manually.']}
+        return redirect('tourney:pairing_index')
+
+    request.session['extra'] = {'errors': ['Preliminary rounds were auto-generated. Review them before publishing.']}
+    return redirect('tourney:pairing_index')
 
 
 def sync_ballots_for_pairing(pairing):
@@ -299,6 +527,7 @@ def pairing_index(request):
         'next_round': next_round,
         'can_add_pairing': next_round <= tournament.total_rounds,
         'next_round_title': get_round_title(tournament, next_round) if next_round <= tournament.total_rounds else None,
+        'show_generate_prelims': tournament.randomize_prelims and not Pairing.objects.filter(tournament=tournament).exists(),
     }
     if request.session.get('extra'):
         dict.update(request.session['extra'])

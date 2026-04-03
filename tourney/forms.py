@@ -58,9 +58,10 @@ class TournamentForm(forms.ModelForm):
         super(TournamentForm, self).__init__(*args, **kwargs)
         for round_num in range(1, 10):
             field_name = f'max_judges_round{round_num}'
-            self.fields[field_name].widget = forms.Select(choices=[(1, '1'), (2, '2'), (3, '3')])
-            self.fields[field_name].label = f'Round {round_num}'
-            self.fields[field_name].help_text = ''
+            if field_name in self.fields:
+                self.fields[field_name].widget = forms.Select(choices=[(1, '1'), (2, '2'), (3, '3')])
+                self.fields[field_name].label = f'Round {round_num}'
+                self.fields[field_name].help_text = ''
 
     def clean(self):
         cleaned_data = super().clean()
@@ -84,6 +85,31 @@ class TournamentForm(forms.ModelForm):
             if required > max_judges:
                 self.add_error(f'max_judges_round{round_num}', 'Max judges must be at least as high as minimum judges assigned.')
         return cleaned_data
+
+
+class CreateTournamentForm(TournamentForm):
+    class Meta(TournamentForm.Meta):
+        exclude = TournamentForm.Meta.exclude + [
+            'required_judges',
+            'max_judges_round1',
+            'max_judges_round2',
+            'max_judges_round3',
+            'max_judges_round4',
+            'max_judges_round5',
+            'max_judges_round6',
+            'max_judges_round7',
+            'max_judges_round8',
+            'max_judges_round9',
+        ]
+
+    def save(self, commit=True):
+        tournament = super().save(commit=False)
+        tournament.required_judges = tournament.judges
+        for round_num in range(1, 10):
+            setattr(tournament, f'max_judges_round{round_num}', tournament.judges)
+        if commit:
+            tournament.save()
+        return tournament
 
 
     

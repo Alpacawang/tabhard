@@ -36,7 +36,7 @@
 
 		<div class="row mx-3">
 			<h3>Team Info</h3>
-			<div class="mb-2 text-muted">This tournament is currently set for {{ user.tournament.wit_nums }} competitor slot{{ user.tournament.wit_nums|pluralize }} per team.</div>
+			<div class="mb-2 text-muted">This tournament is currently set for {{ user.tournament.team_size }} competitor slot{{ user.tournament.team_size|pluralize }} per team.</div>
 			{{ formset.management_form }}
 			{% for form in formset %}
 				{{ form.media }}

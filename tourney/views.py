@@ -32,6 +32,18 @@ from tourney.models.round import Round, Pairing
 from tourney.models.team import Team
 from tourney.models.competitor import Competitor
 
+
+def get_team_competitor_formset(tournament):
+    competitor_slots = max(1, tournament.wit_nums)
+    return inlineformset_factory(
+        Team,
+        Competitor,
+        fields=('name', 'pronouns'),
+        max_num=competitor_slots,
+        validate_max=True,
+        extra=competitor_slots,
+    )
+
 try:
     from tabeasy_secrets.secret import str_int
 except ImportError:
@@ -610,13 +622,7 @@ def view_individual_team(request, pk):
     team = Team.objects.get(user__tournament=tournament, pk=pk)
     if not (request.user.is_team and request.user.team == team) and not request.user.is_staff:
         return HttpResponseNotFound('<h1>Page not found</h1>')
-    if team.byebuster:
-        FormSet = inlineformset_factory(Team, Competitor, fields=('name', 'pronouns'),
-                                        extra=6)
-    else:
-        FormSet = inlineformset_factory(Team, Competitor, fields=('name', 'pronouns'),
-                                        max_num=12, validate_max=True,
-                                        extra=6)
+    FormSet = get_team_competitor_formset(tournament)
 
     if request.method == 'POST':
         formset = FormSet(request.POST, request.FILES,

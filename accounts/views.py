@@ -13,6 +13,18 @@ from django.views.generic import UpdateView
 from tourney.forms import TournamentForm
 
 
+def get_team_competitor_formset(tournament, include_team_header=False):
+    competitor_slots = max(1, tournament.wit_nums)
+    return inlineformset_factory(
+        Team,
+        Competitor,
+        fields=('name', 'pronouns'),
+        max_num=competitor_slots,
+        validate_max=True,
+        extra=competitor_slots,
+    )
+
+
 def signup(request):
     if request.method == 'POST':
         user_form = SignUpForm(data=request.POST)
@@ -39,9 +51,7 @@ def signup(request):
 @user_passes_test(lambda u: u.is_staff)
 def team_signup(request):
     tournament = request.user.tournament
-    FormSet = inlineformset_factory(Team, Competitor,fields=('name', 'pronouns'),
-                                         max_num=12, validate_max=True,
-                                         extra=6)
+    FormSet = get_team_competitor_formset(tournament)
 
     if request.method == 'POST':
         user_form = SignUpForm(data=request.POST, team_signup=True)
@@ -97,7 +107,7 @@ class Login(auth_views.LoginView):
     template_name = 'accounts/login.html'
 
 class Logout(auth_views.LogoutView):
-    next_page = 'index'
+    next_page = reverse_lazy('index')
 
 class ChangePassword(auth_views.PasswordChangeView):
     template_name = 'accounts/change_password.html'

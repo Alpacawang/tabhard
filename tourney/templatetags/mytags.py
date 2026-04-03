@@ -71,7 +71,10 @@ def judge_available_for_round(judge, round_num):
 
 @register.filter
 def upto(value):
-    return range(1, int(value) + 1)
+    try:
+        return range(1, int(value) + 1)
+    except (TypeError, ValueError):
+        return range(0)
 
 
 @register.simple_tag

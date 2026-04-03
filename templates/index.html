@@ -7,15 +7,28 @@
 		{{ error }}
 	{% endfor %}
 	{% if user.is_authenticated %}
-		<h2>Welcome, {{ user }} for {{ user.tournament }}!</h2>
-		{% if user.is_staff %}
-			{% include 'tourney/tab/tab_index.html' %}
-		{% endif %}
+		{% if user.tournament %}
+			<h2>Welcome, {{ user }} for {{ user.tournament }}!</h2>
+			{% if user.is_staff %}
+				{% include 'tourney/tab/tab_index.html' %}
+			{% endif %}
 
-		{% if user.is_team%}
-			{% include 'tourney/team_index.html' %}
-		{% elif user.is_judge %}
-			{% include 'tourney/judge_index.html' %}
+			{% if user.is_team%}
+				{% include 'tourney/team_index.html' %}
+			{% elif user.is_judge %}
+				{% include 'tourney/judge_index.html' %}
+			{% endif %}
+		{% else %}
+			<h2>Welcome, {{ user }}!</h2>
+			<div class="container-md mt-4">
+				<div class="alert alert-warning" role="alert">
+					Your account is not currently attached to a tournament.
+				</div>
+				{% if user.is_superuser %}
+					<a class="button button-primary me-2" href="{% url 'accounts:create_tournament' %}">Create Tournament</a>
+					<a class="button button-primary" href="{% url 'accounts:edit_tournament' %}">Select Tournament</a>
+				{% endif %}
+			</div>
 		{% endif %}
 
 

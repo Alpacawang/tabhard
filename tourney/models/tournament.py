@@ -4,13 +4,16 @@ from django.core.validators import MinValueValidator, MaxValueValidator, RegexVa
 
 p_choices = [
     ('Petitioner', 'Petitioner'),
+    ('Applicant', 'Applicant'),
 ]
 
 ELIM_BREAK_CHOICES = [
     ('none', 'No Elimination Rounds'),
-    ('octas', 'Octas'),
+    ('round32', 'Round of 32'),
+    ('round16', 'Round of 16'),
     ('quarters', 'Quarters'),
     ('semis', 'Semis'),
+    ('finals', 'Finals'),
 ]
 
 # def user_directory_path(instance, filename):
@@ -25,7 +28,7 @@ class Tournament(models.Model):
     wit_nums = models.IntegerField(validators=[MinValueValidator(2), MaxValueValidator(2)], default=2,
                                    help_text='Moot court uses two speakers per side.')
     prelim_rounds = models.IntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        validators=[MinValueValidator(1), MaxValueValidator(4)],
         default=4,
         help_text='How many preliminary rounds should be tabbed before elimination rounds?',
     )
@@ -71,9 +74,11 @@ class Tournament(models.Model):
     def elim_round_names(self):
         mapping = {
             'none': [],
+            'finals': ['Finals'],
             'semis': ['Semis', 'Finals'],
             'quarters': ['Quarters', 'Semis', 'Finals'],
-            'octas': ['Octas', 'Quarters', 'Semis', 'Finals'],
+            'round16': ['Round of 16', 'Quarters', 'Semis', 'Finals'],
+            'round32': ['Round of 32', 'Round of 16', 'Quarters', 'Semis', 'Finals'],
         }
         return mapping.get(self.elim_break, [])
 
@@ -95,7 +100,9 @@ class Tournament(models.Model):
     def elim_break_size(self):
         return {
             'none': 0,
+            'finals': 2,
             'semis': 4,
             'quarters': 8,
-            'octas': 16,
+            'round16': 16,
+            'round32': 32,
         }.get(self.elim_break, 0)

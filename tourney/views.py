@@ -105,6 +105,7 @@ def build_elim_pairings(tournament, round_num):
     teams = get_elim_teams_for_round(tournament, round_num)
     if not teams:
         return []
+    teams = teams[: tournament.elim_break_size] if round_num == tournament.prelim_rounds + 1 else teams
     pairings = []
     while len(teams) >= 2:
         pairings.append((teams.pop(0), teams.pop(-1)))

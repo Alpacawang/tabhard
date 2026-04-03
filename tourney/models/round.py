@@ -14,7 +14,7 @@ class Pairing(models.Model):
         null=True,
         blank=True
     )
-    round_num = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(20)])
+    round_num = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(9)])
     team_submit = models.BooleanField(default=False)
     final_submit = models.BooleanField(default=False)
     publish = models.BooleanField(default=False)
@@ -126,9 +126,9 @@ class Round(models.Model):
             raise ValidationError(errors)
 
 
-    def save(self):
+    def save(self, *args, **kwargs):
         is_new = self.id is None
-        super(Round, self).save()
+        super(Round, self).save(*args, **kwargs)
         if is_new:
             CaptainsMeeting.objects.create(round=self)
         # if self.pairing.final_submit and not self.pairing.publish:
@@ -142,5 +142,4 @@ class Round(models.Model):
         #         for ballot in Ballot.objects.filter(round=self).all():
         #             if ballot.judge not in self.judges:
         #                 Ballot.objects.filter(round=self, judge=ballot.judge).delete()
-
 

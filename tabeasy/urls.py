@@ -35,6 +35,5 @@ urlpatterns = [
     path('load_sections', views.load_sections, name='load_sections'),
     path('load_amta_witnesses', views.load_amta_witnesses),
     path('load_paradigms', views.load_paradigms),
-    path('donate', views.donate, name='donate'),
     re_path(r"^ajax_select/", include(ajax_select_urls)),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

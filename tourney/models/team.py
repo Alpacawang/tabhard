@@ -1,5 +1,3 @@
-import functools
-
 from django.core.exceptions import ValidationError
 from django.db import models
 from django_better_admin_arrayfield.models.fields import ArrayField
@@ -139,11 +137,20 @@ class Team(models.Model):
             self.total_pd = 0
 
     def calc_spirit_score(self):
+        if not self.user.tournament.spirit:
+            self.spirit_score = 0
+            return
         spirit_score = 0
         for i in range(3):
             opponent = self.round_opponent(i+1)
-            if opponent and opponent.spirit and opponent.spirit.submit:
-                spirit_score += opponent.spirit.get_score(i+1)
+            if not opponent:
+                continue
+            try:
+                spirit = opponent.spirit
+            except Exception:
+                spirit = None
+            if spirit and spirit.submit:
+                spirit_score += spirit.get_score(i+1)
         self.spirit_score = spirit_score
 
     def current_rounds(self):

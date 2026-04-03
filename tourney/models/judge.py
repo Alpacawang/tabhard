@@ -30,12 +30,20 @@ class Judge(models.Model):
     available_round3 = models.BooleanField(default=False)
     available_round4 = models.BooleanField(default=False)
     available_round5 = models.BooleanField(default=False)
+    available_round6 = models.BooleanField(default=False)
+    available_round7 = models.BooleanField(default=False)
+    available_round8 = models.BooleanField(default=False)
+    available_round9 = models.BooleanField(default=False)
 
     checkin = models.BooleanField(default=False)
 
+    @classmethod
+    def availability_field_names(cls):
+        return [f'available_round{i}' for i in range(1, 10)]
+
     def get_availability(self, round_num):
-        if round_num > 5:
-            return True
+        if round_num < 1 or round_num > 9:
+            return False
         return getattr(self, f"available_round{round_num}")
 
     def get_preside_preference(self):

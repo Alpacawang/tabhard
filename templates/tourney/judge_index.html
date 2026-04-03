@@ -55,21 +55,11 @@
 						<div class="card-text mt-3 mb-2">Can preside? {{ request.user.judge.get_preside_preference }}</div>
 						<div class="card-text my-2">Availability:</div>
 						<ul class="list-group">
-							{% if request.user.judge.available_round1 %}
-							<li class="list-group-item">Round 1</li>
-							{% endif %}
-							{% if request.user.judge.available_round2 %}
-							<li class="list-group-item">Round 2</li>
-							{% endif %}
-							{% if request.user.judge.available_round3 %}
-							<li class="list-group-item">Round 3</li>
-							{% endif %}
-							{% if request.user.judge.available_round4 %}
-							<li class="list-group-item">Round 4</li>
-							{% endif %}
-							{% if request.user.judge.available_round5 %}
-							<li class="list-group-item">Round 5</li>
-							{% endif %}
+							{% for round_num in request.user.tournament.total_rounds|upto %}
+								{% if request.user.judge|judge_available_for_round:round_num %}
+									<li class="list-group-item">{% round_label request.user.tournament round_num %}</li>
+								{% endif %}
+							{% endfor %}
 						</ul>
 					</div>
 				</div>
@@ -99,7 +89,6 @@
 
 
 </div>
-
 
 
 

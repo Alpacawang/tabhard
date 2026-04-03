@@ -41,6 +41,10 @@ def build_speaker_pairs(section_forms):
     return [grouped[key] for key in sorted(grouped)]
 
 
+def get_primary_subsection(section):
+    return section.subsections.order_by('sequence', 'pk').first()
+
+
 class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFormViewMixin, UpdateView):
     model = Ballot
     template_name = "tourney/ballot.html"
@@ -191,9 +195,10 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
         if CaptainsMeetingSection.objects.filter(captains_meeting=self.object).exists():
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
+                primary_subsection = get_primary_subsection(section)
                 for subsection in CaptainsMeetingSection.objects.filter(captains_meeting=self.object,
                                                           subsection__section=section).all():
-                    if subsection.subsection.sequence == section.subsections.order_by('sequence').first().sequence:
+                    if primary_subsection and subsection.subsection.pk == primary_subsection.pk:
                         temp.append(
                             CaptainsMeetingSectionForm(instance=subsection,
                                                        captains_meeting=self.object,
@@ -206,8 +211,9 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
         else:
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
+                primary_subsection = get_primary_subsection(section)
                 for subsection in SubSection.objects.filter(section=section).all():
-                    if subsection.sequence == section.subsections.order_by('sequence').first().sequence:
+                    if primary_subsection and subsection.pk == primary_subsection.pk:
                         temp.append(
                             CaptainsMeetingSectionForm(subsection=subsection, captains_meeting=self.object,
                                           prefix=subsection.__str__(), request=self.request)
@@ -231,9 +237,10 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
         if CaptainsMeetingSection.objects.filter(captains_meeting=self.object).exists():
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
+                primary_subsection = get_primary_subsection(section)
                 for subsection in CaptainsMeetingSection.objects.filter(captains_meeting=self.object,
                                                                            subsection__section=section).all():
-                    if subsection.subsection.sequence == section.subsections.order_by('sequence').first().sequence:
+                    if primary_subsection and subsection.subsection.pk == primary_subsection.pk:
                         temp.append(
                             CaptainsMeetingSectionForm(request.POST, instance=subsection,
                                                        captains_meeting=self.object,
@@ -246,8 +253,9 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
         else:
             for section in Section.objects.filter(tournament=self.object.round.pairing.tournament).all():
                 temp = []
+                primary_subsection = get_primary_subsection(section)
                 for subsection in SubSection.objects.filter(section=section).all():
-                    if subsection.sequence == section.subsections.order_by('sequence').first().sequence:
+                    if primary_subsection and subsection.pk == primary_subsection.pk:
                         temp.append(
                             CaptainsMeetingSectionForm(request.POST, subsection=subsection,
                                                        captains_meeting=self.object,

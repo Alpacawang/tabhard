@@ -11,7 +11,7 @@
 				<tr>
 					<th scope="col">Judge Name</th>
 					<th scope="col">Preside</th>
-					<th colspan="4" scope="colgroup">Availability</th>
+					<th colspan="{{ user.tournament.total_rounds }}" scope="colgroup">Availability</th>
 					<th scope="col">Conflicts</th>
 					<th scope="col">Edit</th>
 					<th scope="col">Delete</th>
@@ -19,10 +19,9 @@
 				<tr>
 					<th scope="col"></th>
 					<th scope="col"></th>
-					<th scope="col">Round 1</th>
-					<th scope="col">Round 2</th>
-					<th scope="col">Round 3</th>
-					<th scope="col">Round 4</th>
+					{% for round_num in user.tournament.total_rounds|upto %}
+						<th scope="col">{% round_label user.tournament round_num %}</th>
+					{% endfor %}
 					<th scope="col"></th>
 					<th scope="col"></th>
 					<th scope="col"></th>
@@ -41,34 +40,15 @@
 									No
 								{% endif %}
 						</td>
+						{% for round_num in user.tournament.total_rounds|upto %}
 						<td>
-							{% if judge.available_round1 %}
+							{% if judge|judge_available_for_round:round_num %}
 								<i class="fa-solid fa-check mx-1"></i>
 							{% else %}
 								<i class="fa-solid fa-xmark mx-1"></i>
 							{% endif %}
 						</td>
-						<td>
-							{% if judge.available_round2 %}
-								<i class="fa-solid fa-check mx-1"></i>
-							{% else %}
-								<i class="fa-solid fa-xmark mx-1"></i>
-							{% endif %}
-						</td>
-						<td>
-							{% if judge.available_round3 %}
-								<i class="fa-solid fa-check mx-1"></i>
-							{% else %}
-								<i class="fa-solid fa-xmark mx-1"></i>
-							{% endif %}
-						</td>
-						<td>
-							{% if judge.available_round4 %}
-								<i class="fa-solid fa-check mx-1"></i>
-							{% else %}
-								<i class="fa-solid fa-xmark mx-1"></i>
-							{% endif %}
-						</td>
+						{% endfor %}
 						<td>
 						{% if judge.conflicts.all %}
 							{% for team in judge.conflicts.all %}

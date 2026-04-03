@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load mytags %}
 
 {% block content %}
 
@@ -8,7 +9,7 @@
 			{% endfor %}
 		{% endif %}
 
-		<h2>Judge Checkin</h2>
+		<h2>Judge Checkin for {% round_label user.tournament round_num %}</h2>
 		<form method="post">
 			{% csrf_token %}
 			{% include "utils/form_content.html" with form=form %}

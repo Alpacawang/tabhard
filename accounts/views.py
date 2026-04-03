@@ -16,7 +16,7 @@ from tourney.forms import TournamentForm
 def signup(request):
     if request.method == 'POST':
         user_form = SignUpForm(data=request.POST)
-        judge_form = JudgeForm(data=request.POST)
+        judge_form = JudgeForm(data=request.POST, request=request)
         if user_form.is_valid() and judge_form.is_valid():
 
             user = user_form.save()
@@ -30,7 +30,7 @@ def signup(request):
             return redirect('index')
     else:
         user_form = SignUpForm()
-        judge_form = JudgeForm()
+        judge_form = JudgeForm(request=request)
 
     context = {'forms': [user_form, judge_form]}
     return render(request, 'accounts/signup.html', context)
@@ -73,7 +73,7 @@ def team_signup(request):
 def judge_signup(request):
     if request.method == 'POST':
         user_form = SignUpForm(data=request.POST)
-        judge_form = JudgeForm(data=request.POST)
+        judge_form = JudgeForm(data=request.POST, tournament=request.user.tournament, request=request)
         if user_form.is_valid() and judge_form.is_valid():
 
             user = user_form.save()
@@ -86,7 +86,7 @@ def judge_signup(request):
             return redirect('tourney:view_judges')
     else:
         user_form = SignUpForm()
-        judge_form = JudgeForm()
+        judge_form = JudgeForm(tournament=request.user.tournament, request=request)
 
     context = {'forms': [user_form, judge_form]}
     return render(request, 'accounts/judge_signup.html', context)

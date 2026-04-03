@@ -18,20 +18,29 @@ public_choices = [
     ( False, 'Comments Only')
 ]
 
+
+def get_judge_availability_choices(tournament=None):
+    total_rounds = tournament.total_rounds if tournament else 4
+    total_rounds = min(max(total_rounds, 1), 9)
+    return [
+        (f'available_round{i}', tournament.get_round_label(i) if tournament else f'Prelim {i}')
+        for i in range(1, total_rounds + 1)
+    ]
+
 class TeamForm(forms.ModelForm):
     class Meta:
         model = Team
         fields = ['team_name', 'school', 'byebuster']
-        
-JUDGE_AVAILABILITY_CHOICES = [
-    ('available_round1', 'Round 1'),
-    ('available_round2', 'Round 2'),
-    ('available_round3', 'Round 3'),
-    ('available_round4', 'Round 4'),
-]
 
 
 class TournamentForm(forms.ModelForm):
+    judges = forms.TypedChoiceField(
+        choices=[(1, '1'), (2, '2'), (3, '3')],
+        coerce=int,
+        label='Minimum required judges per round',
+        help_text='How many judges must be assigned before a round can be finalized?',
+    )
+
     class Meta:
         model = Tournament
         fields = '__all__'
@@ -43,7 +52,6 @@ class TournamentForm(forms.ModelForm):
     
 class JudgeForm(forms.ModelForm):
     availability = forms.MultipleChoiceField(
-        choices=JUDGE_AVAILABILITY_CHOICES,
         widget=forms.CheckboxSelectMultiple,
         required=False
     )
@@ -53,21 +61,36 @@ class JudgeForm(forms.ModelForm):
         fields = ['preside']
 
     def __init__(self, *args, **kwargs):
+        self.request = kwargs.pop('request', None)
+        tournament = kwargs.pop('tournament', None)
         super(JudgeForm, self).__init__(*args, **kwargs)
+        if tournament is None:
+            if getattr(self.instance, 'user_id', None) and getattr(self.instance.user, 'tournament', None):
+                tournament = self.instance.user.tournament
+            elif self.request and getattr(self.request.user, 'tournament', None):
+                tournament = self.request.user.tournament
+            elif self.data and self.data.get('tournament'):
+                try:
+                    tournament = Tournament.objects.get(pk=self.data.get('tournament'))
+                except (Tournament.DoesNotExist, TypeError, ValueError):
+                    tournament = None
+        availability_choices = get_judge_availability_choices(tournament)
+        self.fields['availability'].choices = availability_choices
         self.fields['availability'].label = "Which round(s) would you like to judge?"
         initial_availability = []
-        for round, _ in JUDGE_AVAILABILITY_CHOICES:
-            if getattr(self.instance, round):
-                initial_availability.append(round)
+        for field_name, _ in availability_choices:
+            if getattr(self.instance, field_name, False):
+                initial_availability.append(field_name)
         self.fields['availability'].initial = initial_availability
 
     def save(self, commit=True):
         m = super(JudgeForm, self).save(commit=False)
-        for round, _ in JUDGE_AVAILABILITY_CHOICES:
-            if round in self.cleaned_data.get('availability'):
-                setattr(m, round, True)
+        selected = set(self.cleaned_data.get('availability') or [])
+        for field_name in Judge.availability_field_names():
+            if field_name in selected:
+                setattr(m, field_name, True)
             else:
-                setattr(m, round, False)
+                setattr(m, field_name, False)
         if commit:
             m.save()
         return m
@@ -136,10 +159,13 @@ class RoundForm(forms.ModelForm):
         errors = []
 
         if self.instance.pairing.final_submit == True:
-            if not cleaned_data.get('presiding_judge'):
+            required_judges = max(1, min(self.instance.pairing.tournament.judges, 3))
+            if required_judges >= 1 and not cleaned_data.get('presiding_judge'):
                 errors.append(f"You haven't assigned presiding judge for {self.instance} yet before checking for conflicts")
-            if not self.instance.pairing.tournament.judges == 1 and not cleaned_data.get('scoring_judge'):
-                errors.append(f"You haven't assigned presiding judge for {self.instance} yet before checking for conflicts")
+            if required_judges >= 2 and not cleaned_data.get('scoring_judge'):
+                errors.append(f"You haven't assigned scoring judge for {self.instance} yet before checking for conflicts")
+            if required_judges >= 3 and not cleaned_data.get('extra_judge'):
+                errors.append(f"You haven't assigned extra judge for {self.instance} yet before checking for conflicts")
 
 
         # check for judges
@@ -285,6 +311,8 @@ class CheckinJudgeForm(forms.Form):
         request = kwargs.pop('request', None)
 
         super(CheckinJudgeForm, self).__init__(*args, **kwargs)
+        if request and getattr(request.user, 'tournament', None) and round_num:
+            self.fields['checkins'].label = f"Which judges are checked in for {request.user.tournament.get_round_label(round_num)}?"
         available_judges_pk = [judge.pk for judge in Judge.objects.filter(user__tournament=request.user.tournament)
                                if judge.get_availability(round_num)]
         self.fields['checkins'].queryset = Judge.objects.filter(checkin=False, pk__in=available_judges_pk)

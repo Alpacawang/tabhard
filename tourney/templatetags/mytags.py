@@ -58,6 +58,21 @@ def get_character(subsection_list, section):
 def int_str(val):
     return encode_int(val)
 
+
+@register.filter
+def judge_available_for_round(judge, round_num):
+    return judge.get_availability(round_num)
+
+
+@register.filter
+def upto(value):
+    return range(1, int(value) + 1)
+
+
+@register.simple_tag
+def round_label(tournament, round_num):
+    return tournament.get_round_label(round_num)
+
 def chaffify(val, chaff_size = 150, chaff_modulus = 7):
     """ Add chaff to the given positive integer.
     chaff_size defines how large the chaffing value is; the larger it is, the larger (and more unwieldy) the resulting value will be.

@@ -560,7 +560,7 @@ def view_individual_judge(request, pk):
     if request.method == 'POST':
         user_form = UpdateConflictForm(
             data=request.POST, instance=judge, request=request)
-        judge_form = JudgeForm(data=request.POST, instance=judge)
+        judge_form = JudgeForm(data=request.POST, instance=judge, request=request)
         if user_form.is_valid():
             user_form.save()
         if judge_form.is_valid():
@@ -568,7 +568,7 @@ def view_individual_judge(request, pk):
         return redirect('tourney:view_judges')
     else:
         user_form = UpdateConflictForm(instance=judge, request=request)
-        judge_form = JudgeForm(instance=judge)
+        judge_form = JudgeForm(instance=judge, request=request)
 
     context = {'conflict_form': user_form, 'preference_form': judge_form}
     return render(request, 'tourney/tab/view_individual_judge.html', context)
@@ -760,6 +760,12 @@ class JudgePreferenceUpdateView(JudgeOnlyMixin, UpdateView):
 
     form_class = JudgeForm
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs['request'] = self.request
+        kwargs['tournament'] = self.request.user.tournament
+        return kwargs
+
     def get_object(self, queryset=None):
         return self.request.user.judge
 
@@ -795,6 +801,9 @@ def generate_passwords(request):
     else:
         excel_file = request.FILES["excel_file"]
         wb = openpyxl.load_workbook(excel_file)
+        total_rounds = min(request.user.tournament.total_rounds, 9)
+        judge_username_col = 4 + total_rounds
+        judge_password_col = judge_username_col + 1
         worksheet = wb["Teams"]
         n = worksheet.max_row
         m = worksheet.max_column
@@ -813,18 +822,22 @@ def generate_passwords(request):
         n = worksheet.max_row
         m = worksheet.max_column
         wb_changed = False
+        worksheet.cell(row=1, column=judge_username_col).value = "Username"
+        worksheet.cell(row=1, column=judge_password_col).value = "Password"
+        for round_num in range(1, total_rounds + 1):
+            worksheet.cell(row=1, column=3 + round_num).value = request.user.tournament.get_round_label(round_num)
         for i in range(2, n + 1):
             first_name = worksheet.cell(i, 1).value
             last_name = worksheet.cell(i, 2).value
 
-            if not worksheet.cell(row=i, column=10).value:
+            if not worksheet.cell(row=i, column=judge_password_col).value:
                 wb_changed = True
-                worksheet.cell(row=i, column=10).value = ''.join(
+                worksheet.cell(row=i, column=judge_password_col).value = ''.join(
                     random.choices(string.ascii_letters + string.digits, k=4))
-            if not worksheet.cell(row=i, column=9).value and first_name and last_name:
+            if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
                 wb_changed = True
                 worksheet.cell(
-                    row=i, column=9).value = f"{request.user.tournament.short_name}_{first_name.lower()}_{last_name.lower()}"
+                    row=i, column=judge_username_col).value = f"{request.user.tournament.short_name}_{first_name.lower()}_{last_name.lower()}"
 
         response = HttpResponse(content_type='application/vnd.ms-excel')
         wb.save(response)
@@ -932,26 +945,29 @@ def load_judges_wrapper(request, wb):
     n = worksheet.max_row
     m = worksheet.max_column
     wb_changed = False
+    total_rounds = min(request.user.tournament.total_rounds, 9)
+    judge_username_col = 4 + total_rounds
+    judge_password_col = judge_username_col + 1
     for i in range(2, n + 1):
         first_name = worksheet.cell(i, 1).value
         last_name = worksheet.cell(i, 2).value
 
-        if not worksheet.cell(row=i, column=10).value:
+        if not worksheet.cell(row=i, column=judge_password_col).value:
             wb_changed = True
-            worksheet.cell(row=i, column=10).value = ''.join(
+            worksheet.cell(row=i, column=judge_password_col).value = ''.join(
                 random.choices(string.ascii_letters + string.digits, k=4))
-        if not worksheet.cell(row=i, column=9).value and first_name and last_name:
+        if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
             wb_changed = True
             worksheet.cell(
-                row=i, column=9).value = f"{first_name.lower()}_{last_name.lower()}"
+                row=i, column=judge_username_col).value = f"{first_name.lower()}_{last_name.lower()}"
 
-        username = worksheet.cell(i, 9).value
+        username = worksheet.cell(i, judge_username_col).value
         if username == None or username == '':
             continue
 
         if last_name == None or last_name == '':
             last_name = ' '
-        raw_password = worksheet.cell(i, 10).value
+        raw_password = worksheet.cell(i, judge_password_col).value
         preside = worksheet.cell(i, 3).value
         if preside in ['CIN', 'No preference']:
             preside = 2
@@ -960,7 +976,7 @@ def load_judges_wrapper(request, wb):
         else:
             preside = 0
         availability = []
-        for j in range(4, 9):
+        for j in range(4, 4 + total_rounds):
             if worksheet.cell(i, j).value in ['y', 'YES', 'Y', 'Yes']:
                 availability.append(True)
             else:
@@ -978,8 +994,8 @@ def load_judges_wrapper(request, wb):
                 user.save()
 
                 judge.preside = preside
-                for i in range(len(availability)):
-                    setattr(judge, f'available_round{i+1}', availability[i])
+                for index, field_name in enumerate(Judge.availability_field_names()):
+                    setattr(judge, field_name, availability[index] if index < len(availability) else False)
                 judge.save()
             else:
                 message += f'create judge {username} \n'
@@ -989,8 +1005,8 @@ def load_judges_wrapper(request, wb):
                 user.set_password(raw_password)
                 user.save()
                 judge = Judge(user=user, preside=preside)
-                for i in range(len(availability)):
-                    setattr(judge, f'available_round{i+1}', availability[i])
+                for index, field_name in enumerate(Judge.availability_field_names()):
+                    setattr(judge, field_name, availability[index] if index < len(availability) else False)
 
                 judge.save()
 

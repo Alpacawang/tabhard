@@ -37,7 +37,13 @@ class TournamentForm(forms.ModelForm):
     judges = forms.TypedChoiceField(
         choices=[(1, '1'), (2, '2'), (3, '3')],
         coerce=int,
-        label='Minimum required judges per round',
+        label='Ballots Counted',
+        help_text='How many ballots should count toward results?',
+    )
+    required_judges = forms.TypedChoiceField(
+        choices=[(1, '1'), (2, '2'), (3, '3')],
+        coerce=int,
+        label='Minimum Judges Assigned',
         help_text='How many judges must be assigned before a round can be finalized?',
     )
 
@@ -47,6 +53,37 @@ class TournamentForm(forms.ModelForm):
         exclude = ['split_division', 'rank_nums', 'conflict_other_side']
     
     publish_ballot_scores = forms.ChoiceField(choices = public_choices, label="Do you want to publish ballot scores or just comments?", initial='', widget=forms.Select())
+
+    def __init__(self, *args, **kwargs):
+        super(TournamentForm, self).__init__(*args, **kwargs)
+        for round_num in range(1, 10):
+            field_name = f'max_judges_round{round_num}'
+            self.fields[field_name].widget = forms.Select(choices=[(1, '1'), (2, '2'), (3, '3')])
+            self.fields[field_name].label = f'Round {round_num}'
+            self.fields[field_name].help_text = ''
+
+    def clean(self):
+        cleaned_data = super().clean()
+        counted = cleaned_data.get('judges') or 1
+        required = cleaned_data.get('required_judges') or 1
+        total_rounds = cleaned_data.get('prelim_rounds', self.instance.prelim_rounds if self.instance.pk else 4)
+        elim_break = cleaned_data.get('elim_break', self.instance.elim_break if self.instance.pk else 'none')
+        elim_counts = {
+            'none': 0,
+            'finals': 1,
+            'semis': 2,
+            'quarters': 3,
+            'round16': 4,
+            'round32': 5,
+        }
+        total_rounds += elim_counts.get(elim_break, 0)
+        for round_num in range(1, total_rounds + 1):
+            max_judges = cleaned_data.get(f'max_judges_round{round_num}') or 1
+            if counted > max_judges:
+                self.add_error(f'max_judges_round{round_num}', 'Max judges must be at least as high as ballots counted.')
+            if required > max_judges:
+                self.add_error(f'max_judges_round{round_num}', 'Max judges must be at least as high as minimum judges assigned.')
+        return cleaned_data
 
 
     
@@ -125,6 +162,7 @@ class RoundForm(forms.ModelForm):
         pairing = kwargs.pop('pairing', None)
         self.other_formset = kwargs.pop('other_formset', None)
         self.request = kwargs.pop('request', None)
+        self.waive_conflicts = kwargs.pop('waive_conflicts', False)
         tournament = self.request.user.tournament
         super(RoundForm, self).__init__(*args, **kwargs)
         if pairing == None:
@@ -132,6 +170,7 @@ class RoundForm(forms.ModelForm):
             self.fields['d_team'].queryset = Team.objects.all()
             self.fields['presiding_judge'].queryset = Judge.objects.filter(preside__gt=0)
         else:
+            max_judges = pairing.tournament.get_max_judges_for_round(pairing.round_num)
             # if not pairing.final_submit:
             for field in self.fields:
                 self.fields[field].required = False
@@ -153,13 +192,32 @@ class RoundForm(forms.ModelForm):
             self.fields['extra_judge'].queryset = Judge.objects.filter(pk__in=available_judges_pk,
                                                                          checkin=True).order_by('checkin',
                                                                                                 'user__username')
+            if max_judges < 2:
+                self.fields['scoring_judge'].widget = forms.HiddenInput()
+                self.fields['extra_judge'].widget = forms.HiddenInput()
+            elif max_judges < 3:
+                self.fields['extra_judge'].widget = forms.HiddenInput()
+
+    def _post_clean(self):
+        self.instance._waive_conflicts = self.waive_conflicts
+        super()._post_clean()
 
     def clean(self):
         cleaned_data = super().clean()
         errors = []
+        max_judges = self.instance.pairing.tournament.get_max_judges_for_round(self.instance.pairing.round_num)
+        required_judges = max(1, min(self.instance.pairing.tournament.required_judges, max_judges))
+
+        if max_judges < 2:
+            cleaned_data['scoring_judge'] = None
+            cleaned_data['extra_judge'] = None
+            self.instance.scoring_judge = None
+            self.instance.extra_judge = None
+        elif max_judges < 3:
+            cleaned_data['extra_judge'] = None
+            self.instance.extra_judge = None
 
         if self.instance.pairing.final_submit == True:
-            required_judges = max(1, min(self.instance.pairing.tournament.judges, 3))
             if required_judges >= 1 and not cleaned_data.get('presiding_judge'):
                 errors.append(f"You haven't assigned presiding judge for {self.instance} yet before checking for conflicts")
             if required_judges >= 2 and not cleaned_data.get('scoring_judge'):

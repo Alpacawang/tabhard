@@ -61,7 +61,12 @@ def int_str(val):
 
 @register.filter
 def judge_available_for_round(judge, round_num):
-    return judge.get_availability(round_num)
+    if not hasattr(judge, 'get_availability'):
+        return False
+    try:
+        return judge.get_availability(round_num)
+    except Exception:
+        return False
 
 
 @register.filter
@@ -71,7 +76,12 @@ def upto(value):
 
 @register.simple_tag
 def round_label(tournament, round_num):
-    return tournament.get_round_label(round_num)
+    if not hasattr(tournament, 'get_round_label'):
+        return f'Round {round_num}'
+    try:
+        return tournament.get_round_label(round_num)
+    except Exception:
+        return f'Round {round_num}'
 
 def chaffify(val, chaff_size = 150, chaff_modulus = 7):
     """ Add chaff to the given positive integer.

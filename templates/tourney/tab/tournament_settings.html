@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+	{% if form.errors %}
+		{% for key, value in form.errors.items %}
+			{% if value %}
+				<div class="alert alert-danger" role="alert">{{ value }}</div>
+			{% endif %}
+		{% endfor %}
+	{% endif %}
+	{% if form.non_field_errors %}
+		{{ form.non_field_errors }}
+	{% endif %}
+
+	<form method="post" class="container-md">
+		{% csrf_token %}
+
+		{% for field in form %}
+			{% if 'max_judges_round' not in field.name %}
+				<div class="form-group col-md-12 p-1 my-2">
+					{% if field.help_text %}
+						<strong>{{ field.help_text }}</strong>
+					{% else %}
+						<strong>{{ field.label_tag }}</strong>
+					{% endif %}
+					<br>
+					{{ field }}
+				</div>
+			{% endif %}
+		{% endfor %}
+
+		<div class="mt-4">
+			<h3>Judges Per Round</h3>
+			<table class="table table-striped table-bordered">
+				<thead class="table-light">
+					<tr>
+						<th>Round</th>
+						<th>Minimum Judges Assigned</th>
+						<th>Max Judges Assigned</th>
+					</tr>
+				</thead>
+				<tbody>
+					{% for row in round_rows %}
+						<tr>
+							<td>{{ row.round_label }}</td>
+							<td>{{ form.required_judges.value|default:form.required_judges.initial }}</td>
+							<td>{{ row.field }}</td>
+						</tr>
+					{% endfor %}
+				</tbody>
+			</table>
+		</div>
+
+		<br>
+		<input class="button button-primary" type="submit" value="Save">
+	</form>
+{% endblock content %}

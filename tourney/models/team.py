@@ -63,10 +63,10 @@ class Team(models.Model):
     def opponents(self):
         teams = []
         for p_round in self.p_rounds.all():
-            if p_round.pairing.round_num != 5:
+            if not self.user.tournament.is_elim_round(p_round.pairing.round_num):
                 teams.append(p_round.d_team)
         for d_round in self.d_rounds.all():
-            if d_round.pairing.round_num != 5:
+            if not self.user.tournament.is_elim_round(d_round.pairing.round_num):
                 teams.append(d_round.p_team)
         return teams
 
@@ -84,12 +84,14 @@ class Team(models.Model):
         if self.p_rounds.count() > 0:
             if self.user.tournament.judges == 1:
                 self.p_ballots = sum([ballot.p_ballot for round in self.p_rounds.all()
-                                      for ballot in round.ballots.all() if ballot.judge == round.presiding_judge])
+                                      for ballot in round.ballots.all()
+                                      if ballot.judge == round.presiding_judge
+                                      and not self.user.tournament.is_elim_round(round.pairing.round_num)])
             else:
                 self.p_ballots = sum([ballot.p_ballot for round in self.p_rounds.all()
-                                      for ballot in round.ballots.all() if self.user.tournament.judges == 3 or
-                                      ballot.judge != round.extra_judge
-                                      and ballot.round.pairing.round_num != 5])
+                                      for ballot in round.ballots.all() if
+                                      not self.user.tournament.is_elim_round(ballot.round.pairing.round_num) and
+                                      (self.user.tournament.judges == 3 or ballot.judge != round.extra_judge)])
         else:
             self.p_ballots = 0
 
@@ -97,12 +99,14 @@ class Team(models.Model):
         if self.d_rounds.count() > 0:
             if self.user.tournament.judges == 1:
                 self.d_ballots = sum([ballot.d_ballot for round in self.d_rounds.all()
-                                      for ballot in round.ballots.all() if ballot.judge == round.presiding_judge])
+                                      for ballot in round.ballots.all()
+                                      if ballot.judge == round.presiding_judge
+                                      and not self.user.tournament.is_elim_round(round.pairing.round_num)])
             else:
                 self.d_ballots = sum([ballot.d_ballot for round in self.d_rounds.all()
-                                      for ballot in round.ballots.all() if self.user.tournament.judges == 3 or
-                                      ballot.judge != round.extra_judge
-                                      and ballot.round.pairing.round_num != 5])
+                                      for ballot in round.ballots.all() if
+                                      not self.user.tournament.is_elim_round(ballot.round.pairing.round_num) and
+                                      (self.user.tournament.judges == 3 or ballot.judge != round.extra_judge)])
         else:
             self.d_ballots = 0
 
@@ -118,20 +122,18 @@ class Team(models.Model):
         if self.d_rounds.count() > 0 or self.p_rounds.count() > 0:
             p_pd = sum([ballot.p_pd for round in self.p_rounds.all()
                         for ballot in round.ballots.all()
-                        if self.user.tournament.judges == 3 or
-                        (self.user.tournament.judges == 2 and
-                         ballot.judge != round.extra_judge) or
-                        (self.user.tournament.judges == 1 and
-                         ballot.judge == round.presiding_judge)
-                        and ballot.round.pairing.round_num != 5])
+                        if not self.user.tournament.is_elim_round(ballot.round.pairing.round_num) and (
+                            self.user.tournament.judges == 3 or
+                            (self.user.tournament.judges == 2 and ballot.judge != round.extra_judge) or
+                            (self.user.tournament.judges == 1 and ballot.judge == round.presiding_judge)
+                        )])
             d_pd = sum([ballot.d_pd for round in self.d_rounds.all()
                         for ballot in round.ballots.all()
-                        if self.user.tournament.judges == 3 or
-                        (self.user.tournament.judges == 2 and
-                         ballot.judge != round.extra_judge) or
-                        (self.user.tournament.judges == 1 and
-                         ballot.judge == round.presiding_judge)
-                        and ballot.round.pairing.round_num != 5])
+                        if not self.user.tournament.is_elim_round(ballot.round.pairing.round_num) and (
+                            self.user.tournament.judges == 3 or
+                            (self.user.tournament.judges == 2 and ballot.judge != round.extra_judge) or
+                            (self.user.tournament.judges == 1 and ballot.judge == round.presiding_judge)
+                        )])
             self.total_pd = p_pd + d_pd
         else:
             self.total_pd = 0

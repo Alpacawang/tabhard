@@ -24,6 +24,7 @@ urlpatterns = [
     path('captains_meeting/<int:pairing_id>',
          views.view_captains_meeting_status, name='view_captains_meeting_status'),
     path('results', views.results, name='results'),
+    path('results/elims', views.elim_results, name='elim_results'),
     path('individual_awards', views.individual_awards, name='individual_awards'),
     path('team/edit_competitor_pronouns/',
          views.edit_competitor_pronouns,

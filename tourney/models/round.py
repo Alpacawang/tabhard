@@ -70,6 +70,7 @@ class Round(models.Model):
     def clean(self):
         super().clean()
         errors = []
+        waive_conflicts = getattr(self, '_waive_conflicts', False)
 
         is_elim = self.pairing.tournament and self.pairing.tournament.is_elim_round(self.pairing.round_num)
 
@@ -79,7 +80,7 @@ class Round(models.Model):
                 raise ValidationError(errors)
             if self.p_team == self.d_team:
                 errors.append(f'{self.p_team} can\'t compete against itself!')
-            if not is_elim:
+            if not is_elim and not waive_conflicts:
                 if self.p_team.next_side(self.pairing.round_num) == 'd':
                     errors.append(f"{self.p_team} is supposed to play d this round")
                 if self.d_team.next_side(self.pairing.round_num) == 'p':
@@ -105,22 +106,24 @@ class Round(models.Model):
                     if not judge.get_availability(self.pairing.round_num):
                         errors.append(f"{judge} is not available for Round {self.pairing.round_num}")
                     #check conflict
-                    for team in self.teams:
-                        if team in judge.conflicts.all():
-                            errors.append(f"{judge} conflicted with team {team}")
+                    if not waive_conflicts:
+                        for team in self.teams:
+                            if team in judge.conflicts.all():
+                                errors.append(f"{judge} conflicted with team {team}")
 
                     #check if judged
-                    p_judged, d_judged = judge.judged(self.pairing.round_num)
-                    if p_judged or d_judged:
-                        if not self.p_team.byebuster and self.p_team in p_judged:
-                            errors.append(f"{judge} has judged team {team}")
-                        if not self.d_team.byebuster and self.d_team in d_judged:
-                            errors.append(f"{judge} has judged team {team}")
-                        if self.pairing.tournament.conflict_other_side:
-                            if not self.p_team.byebuster and self.p_team in d_judged:
-                                errors.append(f"{judge} has judged team {team}")
-                            if not self.d_team.byebuster and self.d_team in p_judged:
-                                errors.append(f"{judge} has judged team {team}")
+                    if not waive_conflicts:
+                        p_judged, d_judged = judge.judged(self.pairing.round_num)
+                        if p_judged or d_judged:
+                            if not self.p_team.byebuster and self.p_team in p_judged:
+                                errors.append(f"{judge} has judged team {self.p_team}")
+                            if not self.d_team.byebuster and self.d_team in d_judged:
+                                errors.append(f"{judge} has judged team {self.d_team}")
+                            if self.pairing.tournament.conflict_other_side:
+                                if not self.p_team.byebuster and self.p_team in d_judged:
+                                    errors.append(f"{judge} has judged team {self.p_team}")
+                                if not self.d_team.byebuster and self.d_team in p_judged:
+                                    errors.append(f"{judge} has judged team {self.d_team}")
 
         if errors != []:
             raise ValidationError(errors)
@@ -142,4 +145,3 @@ class Round(models.Model):
         #         for ballot in Ballot.objects.filter(round=self).all():
         #             if ballot.judge not in self.judges:
         #                 Ballot.objects.filter(round=self, judge=ballot.judge).delete()
-

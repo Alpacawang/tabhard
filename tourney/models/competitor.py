@@ -1,3 +1,4 @@
+from django.apps import apps
 from django.db import models
 from tourney.models import Team
 
@@ -28,57 +29,68 @@ class Competitor(models.Model):
                     return f"{self.name} ({j})"
 
     def calc_att_individual_score(self):
-        p_total = 0
-        d_total = 0
-        dict = {
-            self.att_rank_1.all(): 5,
-            self.att_rank_2.all(): 4,
-            self.att_rank_3.all(): 3,
-            self.att_rank_4.all(): 2,
-        }
-        for k, v in dict.items():
-            for ballot in k:
-                if (self.team.user.tournament.judges == 3) or \
-                        (self.team.user.tournament.judges == 2 and ballot.judge != ballot.round.extra_judge) \
-                        or (self.team.user.tournament.judges == 1 and ballot.judge == ballot.round.presiding_judge):
-                    if ballot.round.p_team == self.team:
-                        p_total += v
-                    else:
-                        d_total += v
-        tournament = self.team.user.tournament
-        if tournament.individual_award_rank_plus_record:
-            p_total += self.team.p_ballots
-            d_total += self.team.d_ballots
-        self.p_att = p_total
-        self.d_att = d_total
+        self.p_att = self._speaker_score_for_side('P')
+        self.d_att = self._speaker_score_for_side('D')
 
     def calc_wit_individual_score(self):
-        p_total = 0
-        d_total = 0
-        dict = {
-            self.wit_rank_1.all(): 5,
-            self.wit_rank_2.all(): 4,
-            self.wit_rank_3.all(): 3,
-            self.wit_rank_4.all(): 2,
-        }
-        for k, v in dict.items():
-            for ballot in k:
-                if (self.team.user.tournament.judges == 3) or \
-                        (self.team.user.tournament.judges == 2 and ballot.judge != ballot.round.extra_judge) \
-                        or (self.team.user.tournament.judges == 1 and ballot.judge == ballot.round.presiding_judge):
-                    if ballot.round.p_team == self.team:
-                        p_total += v
-                    else:
-                        d_total += v
+        self.p_wit = 0
+        self.d_wit = 0
+
+    def _counted_ballot_sections(self):
         tournament = self.team.user.tournament
-        if tournament.individual_award_rank_plus_record:
-            p_total += self.team.p_ballots
-            d_total += self.team.d_ballots
-        self.p_wit = p_total
-        self.d_wit = d_total
+        ballot_section_model = apps.get_model('submission', 'BallotSection')
+        captains_meeting_section_model = apps.get_model('submission', 'CaptainsMeetingSection')
+        assigned_sections = captains_meeting_section_model.objects.filter(
+            competitor=self,
+            subsection__role='att',
+        ).values_list('captains_meeting__round_id', 'subsection_id')
+        total = 0
+        for round_id, subsection_id in assigned_sections:
+            ballot_sections = ballot_section_model.objects.filter(
+                ballot__submit=True,
+                ballot__round_id=round_id,
+                subsection_id=subsection_id,
+            ).select_related('ballot__round')
+            for ballot_section in ballot_sections:
+                ballot = ballot_section.ballot
+                if tournament.is_elim_round(ballot.round.pairing.round_num):
+                    continue
+                if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:
+                    continue
+                if tournament.judges == 2 and ballot.judge == ballot.round.extra_judge:
+                    continue
+                total += ballot_section.score or 0
+        return total
+
+    def _speaker_score_for_side(self, side):
+        tournament = self.team.user.tournament
+        ballot_section_model = apps.get_model('submission', 'BallotSection')
+        captains_meeting_section_model = apps.get_model('submission', 'CaptainsMeetingSection')
+        assigned_sections = captains_meeting_section_model.objects.filter(
+            competitor=self,
+            subsection__role='att',
+            subsection__side=side,
+        ).values_list('captains_meeting__round_id', 'subsection_id')
+        total = 0
+        for round_id, subsection_id in assigned_sections:
+            ballot_sections = ballot_section_model.objects.filter(
+                ballot__submit=True,
+                ballot__round_id=round_id,
+                subsection_id=subsection_id,
+            ).select_related('ballot__round')
+            for ballot_section in ballot_sections:
+                ballot = ballot_section.ballot
+                if tournament.is_elim_round(ballot.round.pairing.round_num):
+                    continue
+                if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:
+                    continue
+                if tournament.judges == 2 and ballot.judge == ballot.round.extra_judge:
+                    continue
+                total += ballot_section.score or 0
+        return total
 
     def calc_total_score(self):
-        self.total_score = self.p_att + self.d_att + self.p_wit + self.d_wit
+        self.total_score = self._counted_ballot_sections()
 
     def __lt__(self, other):
         return self.id < other.id

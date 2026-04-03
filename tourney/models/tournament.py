@@ -60,7 +60,18 @@ class Tournament(models.Model):
     hide_comments = models.BooleanField(default=False,
                                         help_text='Do you want to hide comments on ballots?')
     judges = models.IntegerField(default=2,
-                                 help_text='How many judges do you count into the result?')
+                                 help_text='How many ballots do you count into the result?')
+    required_judges = models.IntegerField(default=2,
+                                          help_text='How many judges must be assigned before a round can be finalized?')
+    max_judges_round1 = models.IntegerField(default=2)
+    max_judges_round2 = models.IntegerField(default=2)
+    max_judges_round3 = models.IntegerField(default=2)
+    max_judges_round4 = models.IntegerField(default=2)
+    max_judges_round5 = models.IntegerField(default=2)
+    max_judges_round6 = models.IntegerField(default=2)
+    max_judges_round7 = models.IntegerField(default=2)
+    max_judges_round8 = models.IntegerField(default=2)
+    max_judges_round9 = models.IntegerField(default=2)
     conflict_other_side = models.BooleanField(default=True)
     hide_captains_meeting = models.BooleanField(
         default=False, help_text='Hide the captains meeting?')
@@ -69,6 +80,23 @@ class Tournament(models.Model):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        errors = {}
+        if self.judges < 1 or self.judges > 3:
+            errors['judges'] = 'Ballots counted must be between 1 and 3.'
+        if self.required_judges < 1 or self.required_judges > 3:
+            errors['required_judges'] = 'Minimum judges assigned must be between 1 and 3.'
+        for round_num in range(1, self.total_rounds + 1):
+            max_judges = self.get_max_judges_for_round(round_num)
+            if max_judges < 1 or max_judges > 3:
+                errors[f'max_judges_round{round_num}'] = 'Max judges per round must be between 1 and 3.'
+            elif self.required_judges > max_judges:
+                errors[f'max_judges_round{round_num}'] = 'Max judges per round cannot be lower than the minimum assigned judges.'
+            elif self.judges > max_judges:
+                errors[f'max_judges_round{round_num}'] = 'Max judges per round cannot be lower than ballots counted.'
+        if errors:
+            raise ValidationError(errors)
 
     @property
     def elim_round_names(self):
@@ -95,6 +123,11 @@ class Tournament(models.Model):
             if 0 <= index < len(self.elim_round_names):
                 return self.elim_round_names[index]
         return f'Prelim {round_num}'
+
+    def get_max_judges_for_round(self, round_num):
+        if round_num < 1 or round_num > 9:
+            return 1
+        return getattr(self, f'max_judges_round{round_num}', 2)
 
     @property
     def elim_break_size(self):

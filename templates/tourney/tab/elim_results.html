@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+	<div class="container-md">
+		{% if rounds_by_pairing %}
+			{% for pairing, rounds in rounds_by_pairing %}
+				<h3 class="mt-4">{{ pairing }}</h3>
+				<table class="table table-striped table-bordered">
+					<thead class="table-light">
+						<tr>
+							<th>Courtroom</th>
+							<th>{{ request.user.tournament.p_choice }}</th>
+							<th>Respondent</th>
+							<th>Winner</th>
+						</tr>
+					</thead>
+					<tbody>
+						{% for item in rounds %}
+							<tr>
+								<td>{{ item.round.courtroom }}</td>
+								<td>{{ item.round.p_team }}</td>
+								<td>{{ item.round.d_team }}</td>
+								<td>{{ item.winner|default:"Pending" }}</td>
+							</tr>
+						{% endfor %}
+					</tbody>
+				</table>
+			{% endfor %}
+		{% else %}
+			<div>No elimination rounds yet.</div>
+		{% endif %}
+	</div>
+{% endblock content %}

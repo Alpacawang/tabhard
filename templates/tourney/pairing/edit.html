@@ -30,9 +30,16 @@
 {#					{% endfor %}#}
 				{% endif %}
 			{% endfor %}
-	
 			<form method="post">
 				{% csrf_token %}
+				{% if show_waive_conflicts %}
+					<div class="alert alert-warning d-flex justify-content-between align-items-center" role="alert">
+						<span>Conflicts detected. You can adjust assignments, or waive conflict checks for this save.</span>
+						<button class="btn btn-outline-dark" type="submit" name="waive_conflicts" value="1" formnovalidate onclick="return confirm('Waive conflict checks for this save?');">
+							Waive Conflicts
+						</button>
+					</div>
+				{% endif %}
 
 					{% for formset, submit_form in formsets|zip:submit_forms %}
 						<div class="row gx-2 pb-2">
@@ -44,8 +51,12 @@
 										<th scope="col">{{pairing.tournament.p_choice}} Team</th>
 										<th scope="col">Respondent Team</th>
 										<th scope="col">Presiding Judge</th>
-										<th scope="col">Scoring Judge</th>
-										<th scope="col">Extra Judge</th>
+										{% if max_judges >= 2 %}
+											<th scope="col">Scoring Judge</th>
+										{% endif %}
+										{% if max_judges >= 3 %}
+											<th scope="col">Scoring Judge</th>
+										{% endif %}
 									</tr>
 								</thead>
 								<tbody>
@@ -57,8 +68,12 @@
 											<td>{% render_field form.p_team class="form-select" name="p_team" %}</td>
 											<td>{% render_field form.d_team class="form-select" name="d_team" %}</td>
 											<td>{% render_field form.presiding_judge class="form-select" name="presiding_judge" %}</td>
-											<td>{% render_field form.scoring_judge class="form-select" name="scoring_judge" %}</td>
-											<td>{% render_field form.extra_judge class="form-select" name="scoring_judge" %}</td>
+											{% if max_judges >= 2 %}
+												<td>{% render_field form.scoring_judge class="form-select" name="scoring_judge" %}</td>
+											{% endif %}
+											{% if max_judges >= 3 %}
+												<td>{% render_field form.extra_judge class="form-select" name="extra_judge" %}</td>
+											{% endif %}
 										</tr>
 										{% for hidden in form.hidden_fields %}
 												{{ hidden }}

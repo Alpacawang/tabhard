@@ -18,6 +18,11 @@
 			Only ONE team should work on the captains meeting form at any given time.
 			Simultaneous changes would override each other. Petitioner should fill the form out first, and then the Respondent should.
 		</div>
+		{% if object.round.pairing.tournament.predetermined_speakers %}
+			<div class="alert alert-info" role="alert">
+				Speakers are predetermined from roster order: the first rostered competitor is Speaker 1 and the second is Speaker 2.
+			</div>
+		{% endif %}
 
 		{% for section in section_forms%}
 			{% for subsection_form in section %}

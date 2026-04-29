@@ -24,7 +24,7 @@ from submission.models.spirit import Spirit
 from tabeasy.settings import DEBUG
 from tabeasy.utils.mixins import JudgeOnlyMixin, PassRequestToFormViewMixin, TabOnlyMixin
 from tourney.forms import RoundForm, UpdateConflictForm, UpdateJudgeFriendForm, PairingFormSet, PairingSubmitForm, \
-    JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CompetitorForm, TeamForm
+    JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CreateTournamentForm, CompetitorForm, TeamForm
 from submission.models.ballot import Ballot
 from submission.models.character import Character, CharacterPronouns
 from tourney.models import Tournament
@@ -44,6 +44,11 @@ def get_team_competitor_formset(tournament):
         validate_max=True,
         extra=competitor_slots,
     )
+
+
+def lock_form_fields(form):
+    for field in form.fields.values():
+        field.disabled = True
 
 try:
     from tabeasy_secrets.secret import str_int
@@ -204,8 +209,10 @@ def choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_r
     return petitioner_teams, respondents
 
 
-def pairing_penalty(p_team, d_team, seen_matchups):
+def pairing_penalty(p_team, d_team, seen_matchups, seen_side_matchups):
     penalty = 0
+    if (p_team.pk, d_team.pk) in seen_side_matchups:
+        penalty += 10000
     if p_team.school and d_team.school and p_team.school == d_team.school:
         penalty += 1000
     if frozenset((p_team.pk, d_team.pk)) in seen_matchups:
@@ -213,7 +220,18 @@ def pairing_penalty(p_team, d_team, seen_matchups):
     return penalty
 
 
-def match_round_teams(p_teams, d_teams, seen_matchups, attempts=250):
+def get_pairing_conflict_reasons(p_team, d_team, seen_matchups, seen_side_matchups):
+    reasons = []
+    if (p_team.pk, d_team.pk) in seen_side_matchups:
+        reasons.append('Repeat matchup on same sides')
+    if p_team.school and d_team.school and p_team.school == d_team.school:
+        reasons.append(f'Same school: {p_team.school}')
+    if frozenset((p_team.pk, d_team.pk)) in seen_matchups:
+        reasons.append('Repeat matchup')
+    return reasons
+
+
+def match_round_teams(p_teams, d_teams, seen_matchups, seen_side_matchups, attempts=250):
     best_pairs = None
     best_penalty = None
     p_teams = p_teams[:]
@@ -222,7 +240,7 @@ def match_round_teams(p_teams, d_teams, seen_matchups, attempts=250):
         random.shuffle(p_teams)
         random.shuffle(d_teams)
         pairs = list(zip(p_teams, d_teams))
-        penalty = sum(pairing_penalty(p_team, d_team, seen_matchups) for p_team, d_team in pairs)
+        penalty = sum(pairing_penalty(p_team, d_team, seen_matchups, seen_side_matchups) for p_team, d_team in pairs)
         if best_penalty is None or penalty < best_penalty:
             best_pairs = pairs[:]
             best_penalty = penalty
@@ -241,7 +259,9 @@ def build_random_prelim_schedule(teams, prelim_rounds):
         side_targets = get_side_targets(teams, prelim_rounds)
         side_counts = defaultdict(int)
         seen_matchups = set()
+        seen_side_matchups = set()
         schedule = []
+        conflicts = []
         failed = False
         for round_num in range(1, prelim_rounds + 1):
             side_split = choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_rounds)
@@ -249,17 +269,26 @@ def build_random_prelim_schedule(teams, prelim_rounds):
                 failed = True
                 break
             petitioner_teams, respondent_teams = side_split
-            pairs, penalty = match_round_teams(petitioner_teams, respondent_teams, seen_matchups)
+            pairs, penalty = match_round_teams(petitioner_teams, respondent_teams, seen_matchups, seen_side_matchups)
             if not pairs:
                 failed = True
                 break
             schedule.append(pairs)
             for p_team, d_team in pairs:
+                conflict_reasons = get_pairing_conflict_reasons(p_team, d_team, seen_matchups, seen_side_matchups)
+                if conflict_reasons:
+                    conflicts.append({
+                        'round': round_num,
+                        'p_team': str(p_team),
+                        'd_team': str(d_team),
+                        'reasons': conflict_reasons,
+                    })
                 side_counts[p_team.pk] += 1
                 seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
+                seen_side_matchups.add((p_team.pk, d_team.pk))
         if not failed:
-            return schedule, []
-    return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.']
+            return schedule, [], conflicts
+    return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
 
 
 def judge_preside_rank(judge):
@@ -286,6 +315,21 @@ def judge_can_cover_round(judge, round_obj, round_num, used_judges):
     if round_obj.pairing.tournament.conflict_other_side:
         if round_obj.p_team in d_judged or round_obj.d_team in p_judged:
             return False
+    return True
+
+
+def judge_preserves_existing_assignments(judge, round_obj):
+    tournament = round_obj.pairing.tournament
+    for existing_round in judge.rounds:
+        if existing_round == round_obj:
+            continue
+        if existing_round.pairing.tournament != tournament:
+            continue
+        if round_obj.p_team == existing_round.p_team or round_obj.d_team == existing_round.d_team:
+            return False
+        if tournament.conflict_other_side:
+            if round_obj.p_team == existing_round.d_team or round_obj.d_team == existing_round.p_team:
+                return False
     return True
 
 
@@ -317,12 +361,87 @@ def assign_judges_for_rounds(tournament, round_num, round_objects):
     return True
 
 
+def assign_free_scoring_judges_for_round(tournament, round_num):
+    pairings = Pairing.objects.filter(tournament=tournament, round_num=round_num)
+    round_objects = list(Round.objects.filter(pairing__in=pairings).order_by('pairing__division', 'courtroom'))
+    if not round_objects:
+        return 0
+
+    judge_pool = list(Judge.objects.filter(user__tournament=tournament))
+    judge_pool = [judge for judge in judge_pool if judge.get_availability(round_num)]
+    judge_pool = sorted(judge_pool, key=lambda judge: (-judge.checkin, -judge_preside_rank(judge), judge.user.username))
+    used_judges = {
+        judge
+        for round_obj in round_objects
+        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]
+        if judge
+    }
+    assigned_count = 0
+
+    for round_obj in round_objects:
+        open_fields = []
+        if not round_obj.scoring_judge:
+            open_fields.append('scoring_judge')
+        if not round_obj.extra_judge:
+            open_fields.append('extra_judge')
+
+        changed_fields = []
+        for field_name in open_fields:
+            candidates = [
+                judge for judge in judge_pool
+                if judge_can_cover_round(judge, round_obj, round_num, used_judges)
+                and judge_preserves_existing_assignments(judge, round_obj)
+            ]
+            if not candidates:
+                continue
+            judge = candidates[0]
+            setattr(round_obj, field_name, judge)
+            used_judges.add(judge)
+            changed_fields.append(field_name)
+            assigned_count += 1
+        if changed_fields:
+            round_obj.save(update_fields=changed_fields)
+
+    for pairing in pairings:
+        sync_ballots_for_pairing(pairing)
+    return assigned_count
+
+
+@user_passes_test(lambda u: u.is_staff)
+def assign_free_scoring_judges(request, round_num):
+    tournament = request.user.tournament
+    if tournament.is_elim_round(round_num):
+        request.session['extra'] = {'errors': ['Free scoring judge assignment is only available for preliminary rounds.']}
+        return redirect('tourney:pairing_index')
+
+    assigned_count = assign_free_scoring_judges_for_round(tournament, round_num)
+    extra = request.session.get('extra', {})
+    if extra.get('auto_pairing_conflicts') and extra.get('tournament_id') != tournament.pk:
+        extra = {}
+    extra['errors'] = [
+        f'Assigned {assigned_count} free available judge(s) as scoring judges for {tournament.get_round_label(round_num)}. '
+        f'Only {tournament.judges} ballot(s) per round will count toward results.'
+    ]
+    if extra.get('auto_pairing_conflicts'):
+        extra['tournament_id'] = tournament.pk
+    request.session['extra'] = extra
+    return redirect('tourney:pairing_index')
+
+
 def get_pairing_letters(division, count):
-    if division == 'Universal':
-        letters = string.ascii_uppercase[8:16]
-    else:
-        letters = string.ascii_uppercase[:8]
-    return letters[:count]
+    start_index = 8 if division == 'Universal' else 0
+    letters = []
+    for offset in range(count):
+        number = start_index + offset
+        label = ''
+        while True:
+            number, remainder = divmod(number, 26)
+            label = string.ascii_uppercase[remainder] + label
+            if number == 0:
+                break
+            number -= 1
+        letters.append(label)
+    return letters
 
 
 @user_passes_test(lambda u: u.is_staff)
@@ -338,13 +457,17 @@ def generate_prelim_pairings(request):
     divisions = ['Disney', 'Universal'] if tournament.split_division else [None]
     schedules = {}
     errors = []
+    pairing_conflicts = []
     for division in divisions:
         teams = get_group_teams_for_pairing(tournament, division)
-        schedule, schedule_errors = build_random_prelim_schedule(teams, tournament.prelim_rounds)
+        schedule, schedule_errors, schedule_conflicts = build_random_prelim_schedule(teams, tournament.prelim_rounds)
         if schedule_errors:
             errors.extend(schedule_errors if division is None else [f'{division}: {error}' for error in schedule_errors])
         else:
             schedules[division] = schedule
+            for conflict in schedule_conflicts:
+                conflict['division'] = division
+            pairing_conflicts.extend(schedule_conflicts)
     if errors:
         request.session['extra'] = {'errors': errors + ['Please create or edit pairings manually.']}
         return redirect('tourney:pairing_index')
@@ -386,7 +509,11 @@ def generate_prelim_pairings(request):
         request.session['extra'] = {'errors': [str(exc), 'Please edit pairings manually.']}
         return redirect('tourney:pairing_index')
 
-    request.session['extra'] = {'errors': ['Preliminary rounds were auto-generated. Review them before publishing.']}
+    request.session['extra'] = {
+        'errors': ['Preliminary rounds were auto-generated. Review them before publishing.'],
+        'auto_pairing_conflicts': pairing_conflicts,
+        'tournament_id': tournament.pk,
+    }
     return redirect('tourney:pairing_index')
 
 
@@ -404,6 +531,18 @@ def sync_ballots_for_pairing(pairing):
             for ballot in Ballot.objects.filter(round=round).all():
                 if ballot.judge not in round.judges:
                     Ballot.objects.filter(round=round, judge=ballot.judge).delete()
+
+
+def build_round_formset(pairing_capacity, extra_forms):
+    return inlineformset_factory(
+        Pairing,
+        Round,
+        form=RoundForm,
+        formset=PairingFormSet,
+        max_num=pairing_capacity,
+        validate_max=True,
+        extra=extra_forms,
+    )
 
 
 def has_conflict_errors(formsets):
@@ -530,7 +669,11 @@ def pairing_index(request):
         'show_generate_prelims': tournament.randomize_prelims and not Pairing.objects.filter(tournament=tournament).exists(),
     }
     if request.session.get('extra'):
-        dict.update(request.session['extra'])
+        extra = request.session['extra']
+        if extra.get('auto_pairing_conflicts') and extra.get('tournament_id') != tournament.pk:
+            request.session.pop('extra', None)
+        else:
+            dict.update(extra)
     return render(request, 'tourney/pairing/main.html', dict)
 
 
@@ -540,14 +683,6 @@ def edit_pairing(request, round_num):
     pairing_capacity = get_pairing_capacity(tournament, round_num)
     waive_conflicts = request.method == "POST" and request.POST.get('waive_conflicts') == '1'
     max_judges = tournament.get_max_judges_for_round(round_num)
-    if DEBUG:
-        RoundFormSet = inlineformset_factory(Pairing, Round, form=RoundForm, formset=PairingFormSet,
-                                             max_num=pairing_capacity, validate_max=True,
-                                             extra=pairing_capacity)
-    else:
-        RoundFormSet = inlineformset_factory(Pairing, Round, form=RoundForm, formset=PairingFormSet,
-                                             max_num=pairing_capacity, validate_max=True,
-                                             extra=pairing_capacity)
 
     if request.user.tournament.split_division:
         if not Pairing.objects.filter(round_num=round_num).exists():
@@ -561,15 +696,20 @@ def edit_pairing(request, round_num):
             div2_pairing = Pairing.objects.filter(
                 round_num=round_num).get(division='Universal')
 
+        div1_extra_forms = pairing_capacity if not div1_pairing.rounds.exists() else 0
+        div2_extra_forms = pairing_capacity if not div2_pairing.rounds.exists() else 0
+        Div1RoundFormSet = build_round_formset(pairing_capacity, div1_extra_forms)
+        Div2RoundFormSet = build_round_formset(pairing_capacity, div2_extra_forms)
+
         if not tournament.is_elim_round(round_num):
             if not div1_pairing.rounds.exists():
                 for index, (p_team, d_team) in enumerate(build_prelim_pairings(tournament, round_num, 'Disney'), start=1):
                     Round.objects.create(pairing=div1_pairing, p_team=p_team, d_team=d_team,
-                                         courtroom=string.ascii_uppercase[index - 1])
+                                         courtroom=get_pairing_letters('Disney', index)[-1])
             if not div2_pairing.rounds.exists():
                 for index, (p_team, d_team) in enumerate(build_prelim_pairings(tournament, round_num, 'Universal'), start=1):
                     Round.objects.create(pairing=div2_pairing, p_team=p_team, d_team=d_team,
-                                         courtroom=string.ascii_uppercase[index - 1])
+                                         courtroom=get_pairing_letters('Universal', index)[-1])
 
         available_judges_pk = [judge.pk for judge in Judge.objects.all()
                                if judge.get_availability(div1_pairing.round_num)]
@@ -577,10 +717,10 @@ def edit_pairing(request, round_num):
             '-checkin', '-preside', 'user__username').all()
 
         if request.method == "POST":
-            div1_formset = RoundFormSet(request.POST, request.FILES, prefix='div1', instance=div1_pairing,
+            div1_formset = Div1RoundFormSet(request.POST, request.FILES, prefix='div1', instance=div1_pairing,
                                         form_kwargs={'pairing': div1_pairing, 'other_formset': None, 'request': request,
                                                      'waive_conflicts': waive_conflicts})
-            div2_formset = RoundFormSet(request.POST, request.FILES, prefix='div2', instance=div2_pairing,
+            div2_formset = Div2RoundFormSet(request.POST, request.FILES, prefix='div2', instance=div2_pairing,
                                         form_kwargs={'pairing': div2_pairing, 'other_formset': div1_formset, 'request': request,
                                                      'waive_conflicts': waive_conflicts})
 
@@ -601,16 +741,16 @@ def edit_pairing(request, round_num):
                     if form.instance.p_team == None or form.instance.d_team == None:
                         actual_round_num -= 1
                 if div1_formset[0].instance.pairing.division == 'Disney':
-                    random_choice = string.ascii_uppercase[:8][:actual_round_num]
+                    random_choice = get_pairing_letters('Disney', actual_round_num)
                 else:
-                    random_choice = string.ascii_uppercase[8:2 *
-                                                           8][:actual_round_num]
+                    random_choice = get_pairing_letters('Universal', actual_round_num)
                 for round in Pairing.objects.get(pk=div1_pairing.pk).rounds.all():
                     if round.courtroom != None:
-                        random_choice = random_choice.replace(
-                            round.courtroom, '')
+                        random_choice = [
+                            label for label in random_choice if label != round.courtroom
+                        ]
                 random_choice = random.sample(
-                    list(random_choice), len(random_choice))
+                    random_choice, len(random_choice))
                 for form in div1_formset:
                     if form.instance.p_team != None and form.instance.d_team != None \
                             and form.instance.courtroom == None:
@@ -627,16 +767,16 @@ def edit_pairing(request, round_num):
                     if form.instance.p_team == None or form.instance.d_team == None:
                         actual_round_num -= 1
                 if div2_formset[0].instance.pairing.division == 'Disney':
-                    random_choice = string.ascii_uppercase[:8][:actual_round_num]
+                    random_choice = get_pairing_letters('Disney', actual_round_num)
                 else:
-                    random_choice = string.ascii_uppercase[8:2 *
-                                                           8][:actual_round_num]
+                    random_choice = get_pairing_letters('Universal', actual_round_num)
                 for round in Pairing.objects.get(pk=div2_pairing.pk).rounds.all():
                     if round.courtroom != None:
-                        random_choice = random_choice.replace(
-                            round.courtroom, '')
+                        random_choice = [
+                            label for label in random_choice if label != round.courtroom
+                        ]
                 random_choice = random.sample(
-                    list(random_choice), len(random_choice))
+                    random_choice, len(random_choice))
                 for form in div2_formset:
                     if form.instance.p_team != None and form.instance.d_team != None \
                             and form.instance.courtroom == None:
@@ -654,12 +794,12 @@ def edit_pairing(request, round_num):
             if both_true:
                 return redirect('tourney:pairing_index')
         else:
-            div1_formset = RoundFormSet(instance=div1_pairing, prefix='div1',
+            div1_formset = Div1RoundFormSet(instance=div1_pairing, prefix='div1',
                                         form_kwargs={'pairing': div1_pairing,
                                                      'other_formset': None,
                                                      'request': request,
                                                      'waive_conflicts': False})
-            div2_formset = RoundFormSet(instance=div2_pairing, prefix='div2',
+            div2_formset = Div2RoundFormSet(instance=div2_pairing, prefix='div2',
                                         form_kwargs={'pairing': div2_pairing,
                                                      'other_formset': div1_formset,
                                                      'request': request,
@@ -683,13 +823,16 @@ def edit_pairing(request, round_num):
             pairing = Pairing.objects.get(
                 tournament=tournament, round_num=round_num)
 
+        extra_forms = pairing_capacity if not pairing.rounds.exists() else 0
+        RoundFormSet = build_round_formset(pairing_capacity, extra_forms)
+
         if tournament.is_elim_round(round_num) and not pairing.rounds.exists():
             for index, (p_team, d_team) in enumerate(build_elim_pairings(tournament, round_num), start=1):
                 Round.objects.create(
                     pairing=pairing,
                     p_team=p_team,
                     d_team=d_team,
-                    courtroom=string.ascii_uppercase[index - 1],
+                    courtroom=get_pairing_letters(None, index)[-1],
                 )
         elif not tournament.is_elim_round(round_num) and not pairing.rounds.exists():
             for index, (p_team, d_team) in enumerate(build_prelim_pairings(tournament, round_num), start=1):
@@ -697,7 +840,7 @@ def edit_pairing(request, round_num):
                     pairing=pairing,
                     p_team=p_team,
                     d_team=d_team,
-                    courtroom=string.ascii_uppercase[index - 1],
+                    courtroom=get_pairing_letters(None, index)[-1],
                 )
 
         available_judges_pk = [judge.pk for judge in Judge.objects.filter(user__tournament=tournament)
@@ -725,15 +868,18 @@ def edit_pairing(request, round_num):
                     if form.instance.p_team == None or form.instance.d_team == None:
                         actual_round_num -= 1
 
-                random_choice = string.ascii_uppercase[:int(
-                    tournament.division_team_num/2)][:actual_round_num]
+                random_choice = get_pairing_letters(
+                    pairing.division,
+                    int(tournament.division_team_num / 2)
+                )[:actual_round_num]
 
                 for round in Pairing.objects.get(pk=pairing.pk).rounds.all():
                     if round.courtroom != None:
-                        random_choice = random_choice.replace(
-                            round.courtroom, '')
+                        random_choice = [
+                            label for label in random_choice if label != round.courtroom
+                        ]
                 random_choice = random.sample(
-                    list(random_choice), len(random_choice))
+                    random_choice, len(random_choice))
                 for form in formset:
                     if form.instance.p_team != None and form.instance.d_team != None \
                             and form.instance.courtroom == None:
@@ -852,8 +998,11 @@ def view_individual_team(request, pk):
     if not (request.user.is_team and request.user.team == team) and not request.user.is_staff:
         return HttpResponseNotFound('<h1>Page not found</h1>')
     FormSet = get_team_competitor_formset(tournament)
+    roster_locked = tournament.predetermined_speakers and request.user.is_team and not request.user.is_staff
 
     if request.method == 'POST':
+        if roster_locked:
+            return HttpResponseForbidden('Team roster is locked because predetermined speakers are enabled.')
         formset = FormSet(request.POST, request.FILES,
                           prefix='competitors', instance=team)
         team_form = TeamForm(data=request.POST, instance=team)
@@ -868,7 +1017,12 @@ def view_individual_team(request, pk):
         formset = FormSet(prefix='competitors', instance=team)
         team_form = TeamForm(instance=team)
 
-    context = {'formset': formset, 'team_form': team_form}
+    if roster_locked:
+        lock_form_fields(team_form)
+        for form in formset:
+            lock_form_fields(form)
+
+    context = {'formset': formset, 'team_form': team_form, 'roster_locked': roster_locked}
     return render(request, 'tourney/tab/view_individual_team.html', context)
 
 
@@ -970,23 +1124,11 @@ def view_captains_meeting_status(request, pairing_id):
 
 class TournamentUpdateView(TabOnlyMixin, UpdateView):
     model = Tournament
-    form_class = TournamentForm
+    form_class = CreateTournamentForm
     template_name = 'tourney/tab/tournament_settings.html'
 
     def get_object(self, queryset=None):
         return self.request.user.tournament
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        round_rows = []
-        for round_num in range(1, self.request.user.tournament.total_rounds + 1):
-            round_rows.append({
-                'round_num': round_num,
-                'round_label': self.request.user.tournament.get_round_label(round_num),
-                'field': context['form'][f'max_judges_round{round_num}'],
-            })
-        context['round_rows'] = round_rows
-        return context
 
     def get_success_url(self):
         # if self.request.user.tournament.spirit:

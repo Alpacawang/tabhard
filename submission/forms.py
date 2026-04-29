@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django import forms
+import re
 
 from submission.models.ballot import Ballot
 from submission.models.captains_meeting import CaptainsMeeting
@@ -179,6 +180,12 @@ class CaptainsMeetingForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         self.request = kwargs.pop("request")
         super(CaptainsMeetingForm, self).__init__(*args, **kwargs)
+        if self.instance.round.pairing.tournament.predetermined_speakers:
+            self.fields['submit'].initial = True
+            self.instance.submit = True
+            if not self.request.user.is_staff:
+                self.fields['submit'].disabled = True
+
         if self.request.user.is_judge and not self.request.user.is_staff:
             for field in self.fields:
                 self.fields[field].disabled = True
@@ -228,9 +235,30 @@ class CaptainsMeetingSectionForm(forms.ModelForm):
         else:
             self.fields['competitor'].queryset = d_team_members
 
+        if tournament.predetermined_speakers:
+            competitor = self.get_predetermined_competitor()
+            if competitor:
+                self.fields['competitor'].initial = competitor
+                self.instance.competitor = competitor
+            if not self.request.user.is_staff:
+                self.fields['competitor'].disabled = True
+
         if not self.init_captains_meeting.submit:
             for field in self.fields:
                 self.fields[field].required = False
+
+    def get_predetermined_competitor(self):
+        match = re.search(r"Speaker (\d+)", self.init_subsection.section.name)
+        if not match:
+            return None
+        speaker_index = int(match.group(1)) - 1
+        if speaker_index not in (0, 1):
+            return None
+        team = self.init_captains_meeting.round.p_team if self.init_subsection.side == 'P' else self.init_captains_meeting.round.d_team
+        competitors = list(team.competitors.order_by('id'))
+        if len(competitors) <= speaker_index:
+            return None
+        return competitors[speaker_index]
 
     def clean(self):
         cleaned_data = super().clean()

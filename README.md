@@ -23,7 +23,7 @@ conda activate tabeasy
 
 Using `venv` instead:
 ```bash
-python3.13 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```

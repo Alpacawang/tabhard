@@ -6,13 +6,43 @@
 	<div class="container-md center">
 		{% if errors %}
 			{% for error in errors %}
-				<div class="alert alert-danger" role="alert">
-					{{ error }}
+				<div class="alert alert-danger{% if forloop.first and auto_pairing_conflicts %} d-flex justify-content-between align-items-center{% endif %}" role="alert">
+					<span>{{ error }}</span>
+					{% if forloop.first and auto_pairing_conflicts %}
+						<button class="btn btn-outline-dark btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#autoPairingConflicts" aria-expanded="false" aria-controls="autoPairingConflicts">
+							Show pairing conflicts
+						</button>
+					{% endif %}
 				</div>
 			{% endfor %}
 		{% endif %}
+		{% if auto_pairing_conflicts %}
+			<div class="collapse mb-3" id="autoPairingConflicts">
+				<div class="card card-body">
+					<ul class="mb-0">
+						{% for conflict in auto_pairing_conflicts %}
+							<li>
+								{% if conflict.division %}{{ conflict.division }} - {% endif %}
+								Round {{ conflict.round }}: {{ conflict.p_team }} vs. {{ conflict.d_team }}
+								({% for reason in conflict.reasons %}{{ reason }}{% if not forloop.last %}; {% endif %}{% endfor %})
+							</li>
+						{% endfor %}
+					</ul>
+				</div>
+			</div>
+		{% endif %}
 
 		<h1>Pairings</h1>
+			{% if show_generate_prelims %}
+				<div class="alert alert-info mb-3" role="alert">
+					Generate all preliminary pairings and judge assignments at once before editing individual rounds.
+				</div>
+				<div class="mb-3">
+					<a href="{% url 'tourney:generate_prelim_pairings' %}">
+						<button type="button" class="button button-primary" onclick="return confirm('Generate pairings and judge assignments for all preliminary rounds?');">Generate Pairings For All Prelim Rounds</button>
+					</a>
+				</div>
+			{% endif %}
 			{% if next_round_title %}
 				<div class="mb-3">Next available round: {{ next_round_title }}</div>
 			{% endif %}
@@ -89,6 +119,11 @@
 					<a href="{% url 'tourney:checkin_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" >Checkin Judges</button>
 					</a>
+					{% if pairing.0.round_num <= user.tournament.prelim_rounds %}
+					<a href="{% url 'tourney:assign_free_scoring_judges' pairing.0.round_num %}">
+						<button type="button" class="button button-primary m-2" onclick="return confirm('Assign free available judges for {{ pairing.0 }} as scoring judges? Only the configured number of ballots will count toward results.');">Assign Free Scoring Judges</button>
+					</a>
+					{% endif %}
 					<a href="{% url 'tourney:delete_pairing' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Are you sure you want to delete Pairing {{ pairing.0.round_num }}?');">Delete Pairing</button>
 					</a>
@@ -105,11 +140,6 @@
 	{% if can_add_pairing %}
 	<a href="{% url 'tourney:edit_pairing' next_round %}">
 		<button type="button" class="button button-primary">Add Pairing</button>
-	</a>
-	{% endif %}
-	{% if show_generate_prelims %}
-	<a href="{% url 'tourney:generate_prelim_pairings' %}">
-		<button type="button" class="button button-primary ms-2" onclick="return confirm('Generate all preliminary pairings and judge assignments automatically?');">Generate Prelims</button>
 	</a>
 	{% endif %}
 

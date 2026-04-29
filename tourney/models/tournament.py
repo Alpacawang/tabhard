@@ -45,6 +45,10 @@ class Tournament(models.Model):
         default=False,
         help_text='Should Tabhard auto-generate all preliminary pairings and judges?',
     )
+    predetermined_speakers = models.BooleanField(
+        default=False,
+        help_text='Predetermine speakers from roster order? First rostered competitor is Speaker 1 and second is Speaker 2.',
+    )
     elim_break = models.CharField(
         max_length=20,
         choices=ELIM_BREAK_CHOICES,
@@ -100,6 +104,8 @@ class Tournament(models.Model):
             errors['judges'] = 'Ballots counted must be between 1 and 3.'
         if self.required_judges < 1 or self.required_judges > 3:
             errors['required_judges'] = 'Minimum judges assigned must be between 1 and 3.'
+        if self.predetermined_speakers and self.team_size == 3:
+            errors['predetermined_speakers'] = 'Predetermined speakers cannot be enabled for 3-person teams.'
         for round_num in range(1, self.total_rounds + 1):
             max_judges = self.get_max_judges_for_round(round_num)
             if max_judges < 1 or max_judges > 3:

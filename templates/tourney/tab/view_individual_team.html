@@ -9,6 +9,12 @@
 {#	{% endfor %}#}
 
 {##}
+	{% if roster_locked %}
+		<div class="alert alert-info" role="alert">
+			This roster is locked because speakers are predetermined from roster order. Contact a tournament administrator to make changes.
+		</div>
+	{% endif %}
+
     <form method="post">
 		{% csrf_token %}
 
@@ -44,7 +50,9 @@
 				{% endfor %}
 			{% endfor %}
 		</div>
-		<input class="button button-primary my-3" type="submit" value="Save">
+		{% if not roster_locked %}
+			<input class="button button-primary my-3" type="submit" value="Save">
+		{% endif %}
 
 
     </form>

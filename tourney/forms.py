@@ -67,8 +67,12 @@ class TournamentForm(forms.ModelForm):
         cleaned_data = super().clean()
         counted = cleaned_data.get('judges') or 1
         required = cleaned_data.get('required_judges') or 1
+        team_size = cleaned_data.get('team_size')
+        predetermined_speakers = cleaned_data.get('predetermined_speakers')
         total_rounds = cleaned_data.get('prelim_rounds', self.instance.prelim_rounds if self.instance.pk else 4)
         elim_break = cleaned_data.get('elim_break', self.instance.elim_break if self.instance.pk else 'none')
+        if predetermined_speakers and team_size == 3:
+            self.add_error('predetermined_speakers', 'Predetermined speakers cannot be enabled for 3-person teams.')
         elim_counts = {
             'none': 0,
             'finals': 1,
@@ -90,6 +94,7 @@ class TournamentForm(forms.ModelForm):
 class CreateTournamentForm(TournamentForm):
     class Meta(TournamentForm.Meta):
         exclude = TournamentForm.Meta.exclude + [
+            'division_team_num',
             'required_judges',
             'max_judges_round1',
             'max_judges_round2',

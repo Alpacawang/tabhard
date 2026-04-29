@@ -65,14 +65,14 @@
 										{{ form.media }}
 {#											<td>{{ form.p_team }}</td>#}
 {#											<td>{{ form.d_team }}</td>#}
-											<td>{% render_field form.p_team class="form-select" name="p_team" %}</td>
-											<td>{% render_field form.d_team class="form-select" name="d_team" %}</td>
-											<td>{% render_field form.presiding_judge class="form-select" name="presiding_judge" %}</td>
+											<td>{% render_field form.p_team class="form-select" %}</td>
+											<td>{% render_field form.d_team class="form-select" %}</td>
+											<td>{% render_field form.presiding_judge class="form-select" %}</td>
 											{% if max_judges >= 2 %}
-												<td>{% render_field form.scoring_judge class="form-select" name="scoring_judge" %}</td>
+												<td>{% render_field form.scoring_judge class="form-select" %}</td>
 											{% endif %}
 											{% if max_judges >= 3 %}
-												<td>{% render_field form.extra_judge class="form-select" name="extra_judge" %}</td>
+												<td>{% render_field form.extra_judge class="form-select" %}</td>
 											{% endif %}
 										</tr>
 										{% for hidden in form.hidden_fields %}

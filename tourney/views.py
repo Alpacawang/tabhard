@@ -225,7 +225,15 @@ def lock_prelim_results(tournament):
 def get_pairing_capacity(tournament, round_num):
     if tournament.is_elim_round(round_num):
         return max(1, len(build_elim_pairings(tournament, round_num)))
-    return int(tournament.division_team_num / 2)
+    if tournament.split_division:
+        division_counts = [
+            Team.objects.filter(user__tournament=tournament, division=division).count()
+            for division in ['Disney', 'Universal']
+        ]
+        team_count = max(division_counts) if division_counts else 0
+    else:
+        team_count = Team.objects.filter(user__tournament=tournament).count()
+    return max(1, (team_count + 1) // 2)
 
 
 def get_round_title(tournament, round_num):
@@ -1195,10 +1203,7 @@ def edit_pairing(request, round_num):
                     if form.instance.p_team == None or form.instance.d_team == None:
                         actual_round_num -= 1
 
-                random_choice = get_pairing_letters(
-                    pairing.division,
-                    int(tournament.division_team_num / 2)
-                )[:actual_round_num]
+                random_choice = get_pairing_letters(pairing.division, max(pairing_capacity, actual_round_num))[:actual_round_num]
 
                 for round in Pairing.objects.get(pk=pairing.pk).rounds.all():
                     if round.courtroom != None:

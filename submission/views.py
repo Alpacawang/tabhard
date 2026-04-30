@@ -32,10 +32,8 @@ def build_speaker_pairs(section_forms):
         if not section_form:
             continue
         subsection = section_form[0].init_subsection
-        match = re.search(r"Speaker (\d+)", subsection.section.name)
-        if not match:
-            continue
-        speaker_num = int(match.group(1))
+        match = re.search(r"Speaker\s*(\d+)", f"{subsection.section.name} {subsection.name}", re.IGNORECASE)
+        speaker_num = int(match.group(1)) if match else ((subsection.sequence + 1) // 2)
         grouped.setdefault(speaker_num, {"speaker_num": speaker_num, "P": None, "D": None})
         grouped[speaker_num][subsection.side] = section_form
     return [grouped[key] for key in sorted(grouped)]
@@ -105,6 +103,10 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        tournament = self.object.round.pairing.tournament
+        is_team_reader = self.request.user.is_team and not self.request.user.is_staff
+        context['show_ballot_scores'] = not is_team_reader or tournament.publish_ballot_scores
+        context['show_ballot_comments'] = True
         context['section_forms'] = []
         if BallotSection.objects.filter(ballot=self.object).exists():
             for section in Section.objects.filter(tournament=self.object.judge.user.tournament).all():

@@ -14,8 +14,8 @@ BOOL_CHOICES = ((True, 'Yes'), (False, 'No'))
 INT_CHOICES = [(i,i) for i in range(11)]
 
 public_choices = [
-    ( True,'Ballot Scores'),
-    ( False, 'Comments Only')
+    (True, 'Scores and comments'),
+    (False, 'Comments only')
 ]
 
 
@@ -50,9 +50,14 @@ class TournamentForm(forms.ModelForm):
     class Meta:
         model = Tournament
         fields = '__all__'
-        exclude = ['split_division', 'rank_nums', 'conflict_other_side']
+        exclude = ['split_division', 'rank_nums', 'conflict_other_side', 'hide_comments']
     
-    publish_ballot_scores = forms.ChoiceField(choices = public_choices, label="Do you want to publish ballot scores or just comments?", initial='', widget=forms.Select())
+    publish_ballot_scores = forms.TypedChoiceField(
+        choices=public_choices,
+        coerce=lambda value: value in (True, 'True', 'true', '1', 1),
+        label='Published ballots should show',
+        widget=forms.Select(),
+    )
 
     def __init__(self, *args, **kwargs):
         super(TournamentForm, self).__init__(*args, **kwargs)

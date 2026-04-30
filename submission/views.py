@@ -109,7 +109,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         context['show_ballot_comments'] = True
         context['section_forms'] = []
         if BallotSection.objects.filter(ballot=self.object).exists():
-            for section in Section.objects.filter(tournament=self.object.judge.user.tournament).all():
+            for section in Section.objects.filter(tournament=tournament).all():
                 context['section_forms'].append(
                     sorted([BallotSectionForm(instance=ballot_section,
                                        subsection=ballot_section.subsection,
@@ -120,7 +120,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
                      ],key= lambda x: x.init_subsection.sequence)
                 )
         else:
-            for section in Section.objects.filter(tournament=self.object.judge.user.tournament).all():
+            for section in Section.objects.filter(tournament=tournament).all():
                 context['section_forms'].append(
                     sorted([BallotSectionForm(subsection=subsection, ballot=self.object,
                                       prefix=subsection.__str__(),
@@ -141,8 +141,9 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         self.object = self.get_object()
         form = self.get_form()
         section_forms = []
+        tournament = self.object.round.pairing.tournament
         if BallotSection.objects.filter(ballot=self.object).exists():
-            for section in Section.objects.filter(tournament=self.object.judge.user.tournament).all():
+            for section in Section.objects.filter(tournament=tournament).all():
                 section_forms.append(
                     sorted([BallotSectionForm(request.POST, instance=ballot_section,
                                        subsection=ballot_section.subsection,
@@ -153,7 +154,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
                      ], key= lambda x: x.init_subsection.sequence)
                 )
         else:
-            for section in Section.objects.filter(tournament=self.object.judge.user.tournament).all():
+            for section in Section.objects.filter(tournament=tournament).all():
                 section_forms.append(
                     sorted([BallotSectionForm(request.POST, subsection=subsection, ballot=self.object,
                                       prefix=subsection.__str__(), request=self.request)

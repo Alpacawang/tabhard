@@ -14,13 +14,18 @@
 				{% endif %}
 			{% endfor %}
 		{% endif %}
-		<div class="alert alert-primary" role="alert">
-			Only ONE team should work on the captains meeting form at any given time.
-			Simultaneous changes would override each other. Petitioner should fill the form out first, and then the Respondent should.
-		</div>
+		{% if not predetermined_speakers_locked %}
+			<div class="alert alert-primary" role="alert">
+				Only ONE team should work on the captains meeting form at any given time.
+				Simultaneous changes would override each other. Petitioner should fill the form out first, and then the Respondent should.
+			</div>
+		{% endif %}
 		{% if object.round.pairing.tournament.predetermined_speakers %}
 			<div class="alert alert-info" role="alert">
 				Speakers are predetermined from roster order: the first rostered competitor is Speaker 1 and the second is Speaker 2.
+				{% if predetermined_speakers_locked %}
+					This form has been automatically submitted for the round.
+				{% endif %}
 			</div>
 		{% endif %}
 
@@ -111,9 +116,26 @@
 				</div>
 			</div>
 
-
-	<form method="post">
-		{% csrf_token %}
+	{% if predetermined_speakers_locked %}
+		<h2>Speaker Order</h2>
+		{% for section in section_forms %}
+			<div class="card my-4 shadow-sm">
+				<h4 class="card-header">{{ section.0.init_subsection.section.name }}</h4>
+				<div class="card-body">
+					<div class="row align-items-end">
+						<div class="col-md-12">
+							<label class="form-label fw-semibold">{{ section.0.init_subsection.section.name }}</label>
+							<div class="form-control form-control-lg bg-light">
+								{{ section.0.instance.competitor|default:"Not assigned" }}
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		{% endfor %}
+	{% else %}
+		<form method="post">
+			{% csrf_token %}
 
 
 {#		<div class="card my-5">#}
@@ -178,7 +200,7 @@
 {#		</div>#}
 
 
-		<h2>Speaker Order</h2>
+			<h2>Speaker Order</h2>
 
 
 			{% for section in section_forms %}
@@ -202,15 +224,16 @@
 
 
 
-{#		{% if request.user.is_team %}#}
-			<input class="button btn-secondary" type="submit" value="Save"
-						style="position:fixed; top: 100px; right: 20px">
-			<div class="form-check" style="position:fixed; top: 150px; right: 20px">
-				{% render_field form.submit class='form-check-input' name="submit" %}
-				<span class="form-check-label"> Submit </span>
-			</div>
-{#		{% endif %}#}
+{#			{% if request.user.is_team %}#}
+				<input class="button btn-secondary" type="submit" value="Save"
+							style="position:fixed; top: 100px; right: 20px">
+				<div class="form-check" style="position:fixed; top: 150px; right: 20px">
+					{% render_field form.submit class='form-check-input' name="submit" %}
+					<span class="form-check-label"> Submit </span>
+				</div>
+{#			{% endif %}#}
 		</form>
+	{% endif %}
 	</div>
 
 

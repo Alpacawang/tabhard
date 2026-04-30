@@ -53,6 +53,8 @@ def get_predetermined_speaker(captains_meeting, subsection):
     if speaker_index not in (0, 1):
         return None
     team = captains_meeting.round.p_team if subsection.side == 'P' else captains_meeting.round.d_team
+    if not team:
+        return None
     competitors = list(team.competitors.order_by('id'))
     if len(competitors) <= speaker_index:
         return None
@@ -177,8 +179,11 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         for section in section_forms:
             for subsection_form in section:
                 subsection_form.save()
-
-        return super().form_valid(form)
+        response = super().form_valid(form)
+        if self.object.submit:
+            from tourney.views import finalize_pending_byebuster_exclusions
+            finalize_pending_byebuster_exclusions(self.object.round.pairing.tournament)
+        return response
 
     def form_invalid(self, form, section_forms):
         context = self.get_context_data()
@@ -225,6 +230,11 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['pronouns_forms'] = []
+        context['predetermined_speakers_locked'] = (
+            self.object.round.pairing.tournament.predetermined_speakers
+            and self.request.user.is_team
+            and not self.request.user.is_staff
+        )
 
         context['section_forms'] = []
         apply_predetermined_speakers(self.object)
@@ -266,6 +276,12 @@ class CaptainsMeetingUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassReq
             return HttpResponseForbidden()
         self.object = self.get_object()
         apply_predetermined_speakers(self.object)
+        if (
+            self.object.round.pairing.tournament.predetermined_speakers
+            and request.user.is_team
+            and not request.user.is_staff
+        ):
+            return redirect(self.get_success_url())
         form = self.get_form()
         pronouns_forms = []
 

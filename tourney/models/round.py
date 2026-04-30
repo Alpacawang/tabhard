@@ -3,6 +3,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from submission.models.captains_meeting import CaptainsMeeting
 from tourney.models.team import Team
+import re
 
 class Pairing(models.Model):
     tournament = models.ForeignKey('tourney.Tournament', on_delete=models.CASCADE,
@@ -18,9 +19,15 @@ class Pairing(models.Model):
     team_submit = models.BooleanField(default=False)
     final_submit = models.BooleanField(default=False)
     publish = models.BooleanField(default=False)
+    ballots_counted_override = models.IntegerField(null=True, blank=True)
 
     def get_rounds(self):
         return self.rounds.order_by('courtroom')
+
+    def ballots_counted(self):
+        if self.tournament and self.tournament.is_elim_round(self.round_num) and self.ballots_counted_override:
+            return self.ballots_counted_override
+        return self.tournament.judges if self.tournament else 1
 
 
     class Meta:
@@ -46,6 +53,12 @@ class Round(models.Model):
                                     related_query_name='scoring_round', null=True, blank=True)
     extra_judge = models.ForeignKey('Judge', on_delete=models.CASCADE, related_name='extra_rounds',
                                       related_query_name='extra_round', null=True, blank=True)
+    additional_judges = models.ManyToManyField(
+        'Judge',
+        related_name='additional_rounds',
+        related_query_name='additional_round',
+        blank=True,
+    )
     # judge_panel = models.ManyToManyField('Judge', related_name='final_rounds', related_query_name='final_round',
     #                                      null=True, blank=True)
 
@@ -57,7 +70,10 @@ class Round(models.Model):
         if not self.presiding_judge:
             return []
         else:
-            return [ judge for judge in [self.presiding_judge, self.scoring_judge, self.extra_judge] if judge ]
+            judges = [judge for judge in [self.presiding_judge, self.scoring_judge, self.extra_judge] if judge]
+            if self.pk:
+                judges += list(self.additional_judges.all())
+            return judges
 
     @property
     def teams(self):
@@ -65,6 +81,38 @@ class Round(models.Model):
 
     def __str__(self):
         return f'Round {self.pairing.round_num} Courtroom {self.courtroom}'
+
+    def _apply_predetermined_speakers(self, captains_meeting):
+        tournament = self.pairing.tournament if self.pairing else None
+        if not tournament or not tournament.predetermined_speakers:
+            return
+
+        from submission.models.section import CaptainsMeetingSection, Section
+
+        for section in Section.objects.filter(tournament=tournament).all():
+            match = re.search(r"Speaker (\d+)", section.name)
+            if not match:
+                continue
+            speaker_index = int(match.group(1)) - 1
+            if speaker_index not in (0, 1):
+                continue
+
+            for subsection in section.subsections.all():
+                team = self.p_team if subsection.side == 'P' else self.d_team
+                if not team:
+                    continue
+                competitors = list(team.competitors.order_by('id'))
+                if len(competitors) <= speaker_index:
+                    continue
+                CaptainsMeetingSection.objects.update_or_create(
+                    captains_meeting=captains_meeting,
+                    subsection=subsection,
+                    defaults={'competitor': competitors[speaker_index]},
+                )
+
+        if not captains_meeting.submit:
+            captains_meeting.submit = True
+            captains_meeting.save(update_fields=['submit'])
 
 
     def clean(self):
@@ -97,11 +145,12 @@ class Round(models.Model):
 
             # if self.presiding_judge.preside == 0:
             #     errors.append(f'{self.presiding_judge} can\'t preside')
-            if len(self.judges) != 0 and len(self.judges) != len(set(self.judges)):
+            round_judges = self.judges
+            if len(round_judges) != 0 and len(round_judges) != len(set(round_judges)):
                 errors.append(f'assigning one judge for two roles in {self}')
 
 
-            for judge in self.judges:
+            for judge in round_judges:
                 if judge != None:
                     if not judge.get_availability(self.pairing.round_num):
                         errors.append(f"{judge} is not available for Round {self.pairing.round_num}")
@@ -132,8 +181,14 @@ class Round(models.Model):
     def save(self, *args, **kwargs):
         is_new = self.id is None
         super(Round, self).save(*args, **kwargs)
+        captains_meeting = None
         if is_new:
-            CaptainsMeeting.objects.create(round=self)
+            captains_meeting = CaptainsMeeting.objects.create(round=self)
+        tournament = self.pairing.tournament if self.pairing else None
+        if tournament and tournament.predetermined_speakers:
+            if captains_meeting is None:
+                captains_meeting, _ = CaptainsMeeting.objects.get_or_create(round=self)
+            self._apply_predetermined_speakers(captains_meeting)
         # if self.pairing.final_submit and not self.pairing.publish:
         #     if not Ballot.objects.filter(round=self).exists():
         #         for judge in self.judges:

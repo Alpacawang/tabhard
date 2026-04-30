@@ -74,7 +74,12 @@
 											<td>{{ round.d_team }}</td>
 											<td>{{ round.presiding_judge }}</td>
 											<td>{{ round.scoring_judge }}</td>
-											<td>{{ round.extra_judge }}</td>
+											<td>
+												{{ round.extra_judge }}
+												{% for judge in round.additional_judges.all %}
+													{% if round.extra_judge or not forloop.first %}, {% endif %}{{ judge }}
+												{% endfor %}
+											</td>
 										</tr>
 									{% endfor %}
 								</tbody>

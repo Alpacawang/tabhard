@@ -57,6 +57,9 @@
 										{% if max_judges >= 3 %}
 											<th scope="col">Scoring Judge</th>
 										{% endif %}
+										{% if max_judges > 3 %}
+											<th scope="col">Additional Scoring Judges</th>
+										{% endif %}
 									</tr>
 								</thead>
 								<tbody>
@@ -73,6 +76,9 @@
 											{% endif %}
 											{% if max_judges >= 3 %}
 												<td>{% render_field form.extra_judge class="form-select" %}</td>
+											{% endif %}
+											{% if max_judges > 3 %}
+												<td>{% render_field form.additional_judges class="form-select" size="6" %}</td>
 											{% endif %}
 										</tr>
 										{% for hidden in form.hidden_fields %}
@@ -95,6 +101,14 @@
 									<span class="form-check-label" style="padding-bottom: 20px"> Publish Results (After Finishing Round)</span>
 									{% render_field submit_form.publish class='form-check-input' name="submit" %}
 								</div>
+								{% if is_elim %}
+									<div class="mx-3">
+										<span class="form-label" style="padding-bottom: 20px">{{ submit_form.ballots_counted_override.label }}</span>
+										{% render_field submit_form.ballots_counted_override class='form-select' %}
+									</div>
+								{% else %}
+									{{ submit_form.ballots_counted_override }}
+								{% endif %}
 							</div>
 						</div>
 					{% endfor %}

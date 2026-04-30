@@ -222,10 +222,33 @@ class CompetitorForm(forms.ModelForm):
 class PairingSubmitForm(forms.ModelForm):
     class Meta:
         model = Pairing
-        fields = ['team_submit', 'final_submit', 'publish']
+        fields = ['team_submit', 'final_submit', 'publish', 'ballots_counted_override']
+
+    def __init__(self, *args, **kwargs):
+        super(PairingSubmitForm, self).__init__(*args, **kwargs)
+        self.fields['ballots_counted_override'].label = 'Ballots counted for this elim round'
+        self.fields['ballots_counted_override'].required = False
+        self.fields['ballots_counted_override'].widget = forms.Select(choices=[('', 'Use tournament default')] + [(i, i) for i in range(1, 10, 2)])
+        if not self.instance.tournament or not self.instance.tournament.is_elim_round(self.instance.round_num):
+            self.fields['ballots_counted_override'].widget = forms.HiddenInput()
+
+    def clean_ballots_counted_override(self):
+        value = self.cleaned_data.get('ballots_counted_override')
+        if not value:
+            return value
+        if value < 1 or value > 9 or value % 2 == 0:
+            raise ValidationError('Elimination ballots counted must be an odd number between 1 and 9.')
+        return value
         
 
 class RoundForm(forms.ModelForm):
+    additional_judges = forms.ModelMultipleChoiceField(
+        queryset=Judge.objects.none(),
+        required=False,
+        widget=forms.SelectMultiple,
+        label='Additional Scoring Judges',
+    )
+
     class Meta:
         model = Round
         fields = '__all__'
@@ -249,7 +272,7 @@ class RoundForm(forms.ModelForm):
             self.fields['d_team'].queryset = Team.objects.all()
             self.fields['presiding_judge'].queryset = Judge.objects.filter(preside__gt=0)
         else:
-            max_judges = pairing.tournament.get_max_judges_for_round(pairing.round_num)
+            max_judges = 9 if pairing.tournament.is_elim_round(pairing.round_num) else pairing.tournament.get_max_judges_for_round(pairing.round_num)
             # if not pairing.final_submit:
             for field in self.fields:
                 self.fields[field].required = False
@@ -271,6 +294,12 @@ class RoundForm(forms.ModelForm):
             self.fields['extra_judge'].queryset = Judge.objects.filter(pk__in=available_judges_pk,
                                                                          checkin=True).order_by('checkin',
                                                                                                 'user__username')
+            self.fields['additional_judges'].queryset = Judge.objects.filter(
+                pk__in=available_judges_pk,
+                checkin=True,
+            ).order_by('checkin', 'user__username')
+            if not pairing.tournament.is_elim_round(pairing.round_num):
+                self.fields['additional_judges'].widget = forms.MultipleHiddenInput()
             if max_judges < 2:
                 self.fields['scoring_judge'].widget = forms.HiddenInput()
                 self.fields['extra_judge'].widget = forms.HiddenInput()
@@ -284,7 +313,7 @@ class RoundForm(forms.ModelForm):
     def clean(self):
         cleaned_data = super().clean()
         errors = []
-        max_judges = self.instance.pairing.tournament.get_max_judges_for_round(self.instance.pairing.round_num)
+        max_judges = 9 if self.instance.pairing.tournament.is_elim_round(self.instance.pairing.round_num) else self.instance.pairing.tournament.get_max_judges_for_round(self.instance.pairing.round_num)
         required_judges = max(1, min(self.instance.pairing.tournament.required_judges, max_judges))
 
         if max_judges < 2:
@@ -304,11 +333,30 @@ class RoundForm(forms.ModelForm):
             if required_judges >= 3 and not cleaned_data.get('extra_judge'):
                 errors.append(f"You haven't assigned extra judge for {self.instance} yet before checking for conflicts")
 
+        form_judges = [
+            cleaned_data.get('presiding_judge'),
+            cleaned_data.get('scoring_judge'),
+            cleaned_data.get('extra_judge'),
+        ] + list(cleaned_data.get('additional_judges') or [])
+        form_judges = [judge for judge in form_judges if judge]
+        if len(form_judges) > max_judges:
+            errors.append(f'You can assign at most {max_judges} judge(s) for {self.instance}.')
+        if len(form_judges) != len(set(form_judges)):
+            errors.append(f'You assigned the same judge more than once for {self.instance}.')
+        if self.instance.pairing.final_submit:
+            for judge in form_judges:
+                if not judge.get_availability(self.instance.pairing.round_num):
+                    errors.append(f"{judge} is not available for Round {self.instance.pairing.round_num}")
+                if not self.waive_conflicts:
+                    for team in [cleaned_data.get('p_team'), cleaned_data.get('d_team')]:
+                        if team and team in judge.conflicts.all():
+                            errors.append(f"{judge} conflicted with team {team}")
+
 
         # check for judges
         if self.other_formset != None and self.instance.pairing.final_submit:
             form_judges = [cleaned_data.get('presiding_judge'), cleaned_data.get('scoring_judge'),
-                           cleaned_data.get('extra_judge')]
+                           cleaned_data.get('extra_judge')] + list(cleaned_data.get('additional_judges') or [])
             for form in self.other_formset:
                 if form.cleaned_data == {} and not DEBUG:
                     raise ValidationError('You don\'t have enough rounds.')
@@ -316,7 +364,7 @@ class RoundForm(forms.ModelForm):
                     continue
 
                 other_form_judges = [form.cleaned_data.get('presiding_judge'),
-                                     form.cleaned_data.get('scoring_judge'), form.cleaned_data.get('extra_judge')]
+                                     form.cleaned_data.get('scoring_judge'), form.cleaned_data.get('extra_judge')] + list(form.cleaned_data.get('additional_judges') or [])
                 # #check if assigned in another division this should be done on the form level
                 for judge in form_judges:
                     if judge and judge in other_form_judges:
@@ -329,10 +377,13 @@ class RoundForm(forms.ModelForm):
     def save(self, commit=True):
         would_save = False
         for k, v in self.instance.__dict__.items():
-            if k in ['p_team_id','d_team_id','presiding_judge_id','scoring_judge_id'] and v != None:
+            if k in ['p_team_id','d_team_id','presiding_judge_id','scoring_judge_id','extra_judge_id'] and v != None:
                 would_save = True
         if would_save:
-            super().save()
+            instance = super().save(commit=commit)
+            if commit and 'additional_judges' in self.cleaned_data:
+                instance.additional_judges.set(self.cleaned_data.get('additional_judges') or [])
+            return instance
 
 
 
@@ -374,7 +425,7 @@ class PairingFormSet(BaseInlineFormSet):
                 if form.cleaned_data == {}:
                     continue
                 form_judges = [form.cleaned_data.get('presiding_judge'),
-                               form.cleaned_data.get('scoring_judge'), form.cleaned_data.get('extra_judge')]
+                               form.cleaned_data.get('scoring_judge'), form.cleaned_data.get('extra_judge')] + list(form.cleaned_data.get('additional_judges') or [])
                 for judge in form_judges:
                     if judge:
                         if judge in existing_judges:

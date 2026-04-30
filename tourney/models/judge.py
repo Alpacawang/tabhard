@@ -60,7 +60,7 @@ class Judge(models.Model):
     @property
     def rounds(self):
         queryset = [round for round in self.presiding_rounds.all()] + [round for round in self.scoring_rounds.all()]\
-                    +[round for round in self.extra_rounds.all()]
+                    + [round for round in self.extra_rounds.all()] + [round for round in self.additional_rounds.all()]
         return sorted(queryset, key=lambda x: x.pairing.round_num)
 
     @property

@@ -14,6 +14,10 @@ class Team(models.Model):
     total_cs = models.FloatField(default=0)
     total_pd = models.FloatField(default=0)
     spirit_score = models.IntegerField(default=0)
+    prelim_seed = models.IntegerField(null=True, blank=True)
+    locked_prelim_ballots = models.FloatField(null=True, blank=True)
+    locked_prelim_cs = models.FloatField(null=True, blank=True)
+    locked_prelim_pd = models.FloatField(null=True, blank=True)
 
     team_name = models.CharField(
         max_length=100,

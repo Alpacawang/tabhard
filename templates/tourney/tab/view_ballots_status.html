@@ -23,7 +23,7 @@
 			</thead>
 			<tbody>
 				{% for ballot in ballots %}
-					<tr>
+					<tr{% if ballot.byebuster_excluded_team %} class="table-danger"{% endif %}>
 						<th scope="row">{{ ballot.round.courtroom }}</th>
 						<td>{{ ballot.judge }}</td>
 						<td>{{ ballot.round.p_team }}</td>
@@ -44,6 +44,9 @@
 								<i class="fa-solid fa-check mx-1"></i>
 							{% else %}
 								<i class="fa-solid fa-xmark mx-1"></i>
+							{% endif %}
+							{% if ballot.byebuster_excluded_team %}
+								<div class="text-danger fw-semibold">Tossed for {{ ballot.byebuster_excluded_team }}</div>
 							{% endif %}
 						</td>
 					</tr>

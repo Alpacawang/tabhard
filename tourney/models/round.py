@@ -31,7 +31,7 @@ class Pairing(models.Model):
 
 
     class Meta:
-        unique_together = ('division', 'round_num',)
+        unique_together = ('tournament', 'division', 'round_num',)
 
     def __str__(self):
         label = self.tournament.get_round_label(self.round_num) if self.tournament else f'Round {self.round_num}'

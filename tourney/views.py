@@ -713,7 +713,8 @@ def generate_prelim_pairings(request):
     if not tournament.randomize_prelims:
         set_pairing_banner(request, tournament, ['Random preliminary generation is turned off in tournament settings.'])
         return redirect('tourney:pairing_index')
-    if Pairing.objects.filter(tournament=tournament).exists():
+    existing_pairings = Pairing.objects.filter(tournament=tournament)
+    if existing_pairings.filter(round_num__gt=tournament.prelim_rounds).exists():
         set_pairing_banner(request, tournament, ['Delete existing pairings before generating all preliminary rounds automatically.'])
         return redirect('tourney:pairing_index')
 
@@ -760,6 +761,8 @@ def generate_prelim_pairings(request):
 
     try:
         with transaction.atomic():
+            Ballot.objects.filter(round__pairing__tournament=tournament, round__pairing__round_num__lte=tournament.prelim_rounds).delete()
+            Pairing.objects.filter(tournament=tournament, round_num__lte=tournament.prelim_rounds).delete()
             Team.objects.filter(user__tournament=tournament).update(byebuster=False)
             for byebuster_team in byebuster_teams:
                 Team.objects.filter(pk=byebuster_team.pk).update(byebuster=True)
@@ -815,17 +818,11 @@ def generate_prelim_pairings(request):
 def sync_ballots_for_pairing(pairing):
     if not pairing.final_submit:
         return
-    for round in pairing.rounds.all():
-        if not Ballot.objects.filter(round=round).exists():
-            for judge in round.judges:
-                Ballot.objects.create(round=round, judge=judge)
-        else:
-            for judge in round.judges:
-                if not Ballot.objects.filter(round=round, judge=judge).exists():
-                    Ballot.objects.create(round=round, judge=judge)
-            for ballot in Ballot.objects.filter(round=round).all():
-                if ballot.judge not in round.judges:
-                    Ballot.objects.filter(round=round, judge=ballot.judge).delete()
+    for round_obj in pairing.rounds.all():
+        judges = round_obj.judges
+        for judge in judges:
+            Ballot.objects.get_or_create(round=round_obj, judge=judge)
+        Ballot.objects.filter(round=round_obj).exclude(judge__in=judges).delete()
 
 
 def mark_random_byebuster_exclusion(byebuster_team):
@@ -1016,15 +1013,15 @@ def edit_pairing(request, round_num):
     max_judges = 9 if tournament.is_elim_round(round_num) else tournament.get_max_judges_for_round(round_num)
 
     if request.user.tournament.split_division and not tournament.is_elim_round(round_num):
-        if not Pairing.objects.filter(round_num=round_num).exists():
+        if not Pairing.objects.filter(tournament=tournament, round_num=round_num).exists():
             div1_pairing = Pairing.objects.create(
-                round_num=round_num, division='Disney')
+                tournament=tournament, round_num=round_num, division='Disney')
             div2_pairing = Pairing.objects.create(
-                round_num=round_num, division='Universal')
+                tournament=tournament, round_num=round_num, division='Universal')
         else:
-            div1_pairing = Pairing.objects.filter(
+            div1_pairing = Pairing.objects.filter(tournament=tournament,
                 round_num=round_num).get(division='Disney')
-            div2_pairing = Pairing.objects.filter(
+            div2_pairing = Pairing.objects.filter(tournament=tournament,
                 round_num=round_num).get(division='Universal')
 
         div1_extra_forms = pairing_capacity if not div1_pairing.rounds.exists() else 0
@@ -1246,17 +1243,24 @@ def edit_pairing(request, round_num):
 @user_passes_test(lambda u: u.is_staff)
 def delete_pairing(request, round_num):
     errors = []
-    cur_pairing = Pairing.objects.filter(
-        tournament=request.user.tournament, round_num=round_num)
+    tournament = request.user.tournament
+    cur_pairing = Pairing.objects.filter(tournament=tournament, round_num=round_num)
     if cur_pairing.exists():
-        pairing_list = Pairing.objects.filter(tournament=request.user.tournament
-                                              ).order_by('round_num')
-        if pairing_list[len(pairing_list)-1] == cur_pairing[0]:
-            Pairing.objects.filter(
-                tournament=request.user.tournament, round_num=round_num).delete()
+        last_round_num = Pairing.objects.filter(tournament=tournament).order_by('-round_num').values_list('round_num', flat=True).first()
+        if last_round_num == round_num:
+            Ballot.objects.filter(round__pairing__in=cur_pairing).delete()
+            cur_pairing.delete()
+            if round_num <= tournament.prelim_rounds:
+                Team.objects.filter(user__tournament=tournament).update(
+                    byebuster=False,
+                    prelim_seed=None,
+                    locked_prelim_ballots=None,
+                    locked_prelim_cs=None,
+                    locked_prelim_pd=None,
+                )
         else:
             errors.append('You can only delete the last pairing!')
-    set_pairing_banner(request, request.user.tournament, errors)
+    set_pairing_banner(request, tournament, errors)
     return redirect('tourney:pairing_index')
 
     # request, 'tourney/pairing/main.html', {'errors':errors})

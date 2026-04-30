@@ -1,5 +1,5 @@
 from django.contrib.auth.decorators import login_required, user_passes_test
-from django.contrib.auth import login, authenticate
+from django.contrib.auth import login, authenticate, logout as auth_logout
 from django.forms import inlineformset_factory
 from django.shortcuts import render, redirect
 from django.http import JsonResponse, Http404
@@ -108,6 +108,14 @@ class Login(auth_views.LoginView):
 
 class Logout(auth_views.LogoutView):
     next_page = reverse_lazy('index')
+
+    def get(self, request, *args, **kwargs):
+        auth_logout(request)
+        return render(request, 'index.html')
+
+    def post(self, request, *args, **kwargs):
+        auth_logout(request)
+        return render(request, 'index.html')
 
 class ChangePassword(auth_views.PasswordChangeView):
     template_name = 'accounts/change_password.html'

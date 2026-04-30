@@ -53,6 +53,8 @@ class Competitor(models.Model):
             ).select_related('ballot__round')
             for ballot_section in ballot_sections:
                 ballot = ballot_section.ballot
+                if ballot.byebuster_excluded_team_id == self.team_id:
+                    continue
                 if tournament.is_elim_round(ballot.round.pairing.round_num):
                     continue
                 if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:
@@ -80,6 +82,8 @@ class Competitor(models.Model):
             ).select_related('ballot__round')
             for ballot_section in ballot_sections:
                 ballot = ballot_section.ballot
+                if ballot.byebuster_excluded_team_id == self.team_id:
+                    continue
                 if tournament.is_elim_round(ballot.round.pairing.round_num):
                     continue
                 if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:

@@ -117,6 +117,54 @@ class CreateTournamentForm(TournamentForm):
         return tournament
 
 
+class ByebusterGenerateForm(forms.Form):
+    use_byebuster = forms.ChoiceField(
+        choices=[('yes', 'Yes'), ('no', 'No')],
+        label='Use a byebuster team?',
+        widget=forms.Select(),
+    )
+    counted_rounds = forms.TypedChoiceField(
+        coerce=int,
+        label='How many rounds should each non-byebuster team count?',
+    )
+    byebuster_school = forms.ChoiceField(
+        label='Which school should the byebuster team come from?',
+    )
+    distribution = forms.ChoiceField(
+        choices=[('spread', 'Spread byes across rounds'), ('concentrate', 'Concentrate byes')],
+        label='How should byes be distributed?',
+    )
+
+    def __init__(self, *args, **kwargs):
+        tournament = kwargs.pop('tournament')
+        divisions = kwargs.pop('divisions')
+        super(ByebusterGenerateForm, self).__init__(*args, **kwargs)
+        odd_pools = []
+        for division in divisions:
+            teams = list(Team.objects.filter(user__tournament=tournament, division=division).order_by('team_name')) if division else list(Team.objects.filter(user__tournament=tournament).order_by('team_name'))
+            if len(teams) % 2 == 1:
+                odd_pools.append(teams)
+        max_counted_rounds = tournament.prelim_rounds - 1
+        feasible_counts = []
+        for counted_rounds in range(1, max_counted_rounds + 1):
+            if all((len(teams) * counted_rounds + 1) % 2 == 0 for teams in odd_pools):
+                feasible_counts.append((counted_rounds, counted_rounds))
+        self.fields['counted_rounds'].choices = feasible_counts
+        schools = sorted({
+            team.school for teams in odd_pools for team in teams
+            if team.school
+        })
+        self.fields['byebuster_school'].choices = [('random', 'Randomize')] + [(school, school) for school in schools]
+        if not feasible_counts:
+            self.fields['counted_rounds'].choices = []
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if cleaned_data.get('use_byebuster') == 'no':
+            raise ValidationError('Auto-generation needs a byebuster team when a pairing pool has an odd number of teams.')
+        return cleaned_data
+
+
     
 class JudgeForm(forms.ModelForm):
     availability = forms.MultipleChoiceField(

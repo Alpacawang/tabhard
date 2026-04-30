@@ -43,6 +43,14 @@ class Ballot(models.Model):
                                    related_name='wit_rank_4', null=True)
     upload = models.FileField(upload_to=user_directory_path, null=True, blank=True)
     submit = models.BooleanField(default=False, help_text='Submit')
+    byebuster_excluded_team = models.ForeignKey(
+        Team,
+        on_delete=models.SET_NULL,
+        related_name='excluded_byebuster_ballots',
+        related_query_name='excluded_byebuster_ballot',
+        null=True,
+        blank=True,
+    )
 
     def att_ranks(self):
         return [self.att_rank_1, self.att_rank_2, self.att_rank_3, self.att_rank_4]

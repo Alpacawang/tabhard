@@ -18,7 +18,7 @@ class BallotForm(forms.ModelForm):
         model = Ballot
         fields = '__all__'
         exclude = ['round', 'judge', 'att_rank_1', 'att_rank_2', 'att_rank_3', 'att_rank_4',
-                   'wit_rank_1', 'wit_rank_2', 'wit_rank_3', 'wit_rank_4']
+                   'wit_rank_1', 'wit_rank_2', 'wit_rank_3', 'wit_rank_4', 'byebuster_excluded_team']
 
     def __init__(self, *args, **kwargs):
         self.request = kwargs.pop("request")

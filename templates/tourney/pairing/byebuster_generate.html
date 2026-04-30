@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+
+{% block content %}
+	<div class="container-md">
+		<h1>Byebuster Setup</h1>
+		<div class="alert alert-info" role="alert">
+			One or more preliminary pairing pools has an odd number of teams. A byebuster team can compete one extra round so every other team counts the same number of rounds.
+		</div>
+
+		{% if form.errors %}
+			{% for key, value in form.errors.items %}
+				{% if value %}
+					<div class="alert alert-danger" role="alert">{{ value }}</div>
+				{% endif %}
+			{% endfor %}
+		{% endif %}
+
+		<form method="post">
+			{% csrf_token %}
+			{% for field in form %}
+				<div class="form-group col-md-12 p-1 my-2">
+					<strong>{{ field.label_tag }}</strong>
+					<br>
+					{{ field }}
+				</div>
+			{% endfor %}
+			<input class="button button-primary my-3" type="submit" value="Generate Pairings">
+		</form>
+	</div>
+{% endblock content %}

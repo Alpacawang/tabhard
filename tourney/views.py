@@ -7,6 +7,7 @@ from django.contrib.auth.decorators import user_passes_test, login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.forms import inlineformset_factory
 from django.http import HttpResponseForbidden, HttpResponseNotFound, HttpResponse
 from django.shortcuts import render, redirect, get_object_or_404
@@ -24,7 +25,8 @@ from submission.models.spirit import Spirit
 from tabeasy.settings import DEBUG
 from tabeasy.utils.mixins import JudgeOnlyMixin, PassRequestToFormViewMixin, TabOnlyMixin
 from tourney.forms import RoundForm, UpdateConflictForm, UpdateJudgeFriendForm, PairingFormSet, PairingSubmitForm, \
-    JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CreateTournamentForm, CompetitorForm, TeamForm
+    JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CreateTournamentForm, CompetitorForm, TeamForm, \
+    ByebusterGenerateForm
 from submission.models.ballot import Ballot
 from submission.models.character import Character, CharacterPronouns
 from tourney.models import Tournament
@@ -49,6 +51,37 @@ def get_team_competitor_formset(tournament):
 def lock_form_fields(form):
     for field in form.fields.values():
         field.disabled = True
+
+
+def set_pairing_banner(request, tournament, errors, **extra):
+    request.session['extra'] = {
+        'errors': errors,
+        'tournament_id': tournament.pk,
+        **extra,
+    }
+
+
+def normalize_import_username(username):
+    return re.sub(r'[^a-zA-Z0-9_-]+', '_', str(username or '').strip()).strip('_').lower()
+
+
+def get_import_username_for_tournament(tournament, username):
+    base = normalize_import_username(username)
+    tournament_prefix = normalize_import_username(tournament.short_name or tournament.name or 'tournament')
+    if not base:
+        base = 'account'
+    if User.objects.filter(username=base, tournament=tournament).exists():
+        return base
+    if not User.objects.filter(username=base).exists():
+        return base
+
+    localized_base = f'{tournament_prefix}_{base}' if tournament_prefix else base
+    candidate = localized_base
+    index = 2
+    while User.objects.filter(username=candidate).exists():
+        candidate = f'{localized_base}_{index}'
+        index += 1
+    return candidate
 
 try:
     from tabeasy_secrets.secret import str_int
@@ -231,6 +264,32 @@ def get_pairing_conflict_reasons(p_team, d_team, seen_matchups, seen_side_matchu
     return reasons
 
 
+def round_pairing_penalty(pairs, seen_matchups, seen_side_matchups):
+    return sum(pairing_penalty(p_team, d_team, seen_matchups, seen_side_matchups) for p_team, d_team in pairs)
+
+
+def improve_round_pairs(pairs, seen_matchups, seen_side_matchups):
+    pairs = pairs[:]
+    best_penalty = round_pairing_penalty(pairs, seen_matchups, seen_side_matchups)
+    improved = True
+    while improved:
+        improved = False
+        for i in range(len(pairs)):
+            for j in range(i + 1, len(pairs)):
+                swapped = pairs[:]
+                swapped[i] = (pairs[i][0], pairs[j][1])
+                swapped[j] = (pairs[j][0], pairs[i][1])
+                swapped_penalty = round_pairing_penalty(swapped, seen_matchups, seen_side_matchups)
+                if swapped_penalty < best_penalty:
+                    pairs = swapped
+                    best_penalty = swapped_penalty
+                    improved = True
+                    break
+            if improved:
+                break
+    return pairs, best_penalty
+
+
 def match_round_teams(p_teams, d_teams, seen_matchups, seen_side_matchups, attempts=250):
     best_pairs = None
     best_penalty = None
@@ -240,7 +299,7 @@ def match_round_teams(p_teams, d_teams, seen_matchups, seen_side_matchups, attem
         random.shuffle(p_teams)
         random.shuffle(d_teams)
         pairs = list(zip(p_teams, d_teams))
-        penalty = sum(pairing_penalty(p_team, d_team, seen_matchups, seen_side_matchups) for p_team, d_team in pairs)
+        pairs, penalty = improve_round_pairs(pairs, seen_matchups, seen_side_matchups)
         if best_penalty is None or penalty < best_penalty:
             best_pairs = pairs[:]
             best_penalty = penalty
@@ -289,6 +348,144 @@ def build_random_prelim_schedule(teams, prelim_rounds):
         if not failed:
             return schedule, [], conflicts
     return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
+
+
+def get_byebuster_round_pair_counts(team_count, counted_rounds, prelim_rounds, distribution):
+    max_pairs = (team_count - 1) // 2
+    total_pairs = (team_count * counted_rounds + 1) // 2
+    if counted_rounds >= prelim_rounds or total_pairs < prelim_rounds or total_pairs > prelim_rounds * max_pairs:
+        return None
+    pair_counts = [1] * prelim_rounds
+    remaining = total_pairs - prelim_rounds
+    if distribution == 'concentrate':
+        for index in range(prelim_rounds):
+            add = min(max_pairs - pair_counts[index], remaining)
+            pair_counts[index] += add
+            remaining -= add
+            if remaining == 0:
+                break
+    else:
+        index = 0
+        while remaining > 0:
+            if pair_counts[index] < max_pairs:
+                pair_counts[index] += 1
+                remaining -= 1
+            index = (index + 1) % prelim_rounds
+    if remaining != 0:
+        return None
+    return pair_counts
+
+
+def choose_byebuster_team(teams, school_choice):
+    if school_choice == 'random':
+        return random.choice(teams)
+    candidates = [team for team in teams if team.school == school_choice]
+    if not candidates:
+        return None
+    return random.choice(candidates)
+
+
+def choose_playing_teams_for_byebuster(teams, appearance_targets, appearance_counts, playing_count, round_num, prelim_rounds):
+    remaining_rounds = prelim_rounds - round_num + 1
+    must_play = [
+        team for team in teams
+        if appearance_targets[team.pk] - appearance_counts[team.pk] >= remaining_rounds
+    ]
+    if len(must_play) > playing_count:
+        return None
+    eligible = [
+        team for team in teams
+        if appearance_counts[team.pk] < appearance_targets[team.pk] and team not in must_play
+    ]
+    eligible.sort(key=lambda team: appearance_targets[team.pk] - appearance_counts[team.pk], reverse=True)
+    tied_groups = defaultdict(list)
+    for team in eligible:
+        tied_groups[appearance_targets[team.pk] - appearance_counts[team.pk]].append(team)
+    eligible = []
+    for key in sorted(tied_groups.keys(), reverse=True):
+        group = tied_groups[key]
+        random.shuffle(group)
+        eligible.extend(group)
+    playing = must_play + eligible[: playing_count - len(must_play)]
+    if len(playing) != playing_count:
+        return None
+    for team in teams:
+        remaining_after = appearance_targets[team.pk] - appearance_counts[team.pk] - (1 if team in playing else 0)
+        if remaining_after > remaining_rounds - 1:
+            return None
+    return playing
+
+
+def get_side_targets_for_appearances(teams, appearance_targets):
+    targets = {}
+    total_petitioner_slots = sum(appearance_targets[team.pk] for team in teams) // 2
+    for team in teams:
+        targets[team.pk] = appearance_targets[team.pk] // 2
+    extra_slots = total_petitioner_slots - sum(targets.values())
+    extra = [team for team in teams if appearance_targets[team.pk] % 2 == 1]
+    random.shuffle(extra)
+    for team in extra[:extra_slots]:
+        targets[team.pk] += 1
+    return targets
+
+
+def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school_choice, distribution):
+    if len(teams) % 2 != 1:
+        return None, ['Byebuster generation only applies to odd team pools.'], [], None
+    byebuster_team = choose_byebuster_team(teams, school_choice)
+    if not byebuster_team:
+        return None, [f'No team found from school "{school_choice}" in an odd pairing pool.'], [], None
+    pair_counts = get_byebuster_round_pair_counts(len(teams), counted_rounds, prelim_rounds, distribution)
+    if not pair_counts:
+        return None, ['Byebuster settings are not feasible for this team count and number of preliminary rounds.'], [], None
+
+    appearance_targets = {team.pk: counted_rounds for team in teams}
+    appearance_targets[byebuster_team.pk] = counted_rounds + 1
+
+    for _ in range(300):
+        appearance_counts = defaultdict(int)
+        side_counts = defaultdict(int)
+        side_targets = get_side_targets_for_appearances(teams, appearance_targets)
+        seen_matchups = set()
+        seen_side_matchups = set()
+        schedule = []
+        conflicts = []
+        failed = False
+        for round_num, pair_count in enumerate(pair_counts, start=1):
+            playing_count = pair_count * 2
+            playing_teams = choose_playing_teams_for_byebuster(
+                teams, appearance_targets, appearance_counts, playing_count, round_num, prelim_rounds
+            )
+            if not playing_teams:
+                failed = True
+                break
+            side_split = choose_petitioner_side(playing_teams, side_targets, side_counts, round_num, prelim_rounds)
+            if not side_split:
+                failed = True
+                break
+            petitioner_teams, respondent_teams = side_split
+            pairs, penalty = match_round_teams(petitioner_teams, respondent_teams, seen_matchups, seen_side_matchups)
+            if not pairs:
+                failed = True
+                break
+            schedule.append(pairs)
+            for p_team, d_team in pairs:
+                conflict_reasons = get_pairing_conflict_reasons(p_team, d_team, seen_matchups, seen_side_matchups)
+                if conflict_reasons:
+                    conflicts.append({
+                        'round': round_num,
+                        'p_team': str(p_team),
+                        'd_team': str(d_team),
+                        'reasons': conflict_reasons,
+                    })
+                for team in [p_team, d_team]:
+                    appearance_counts[team.pk] += 1
+                side_counts[p_team.pk] += 1
+                seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
+                seen_side_matchups.add((p_team.pk, d_team.pk))
+        if not failed and all(appearance_counts[team.pk] == appearance_targets[team.pk] for team in teams):
+            return schedule, [], conflicts, byebuster_team
+    return None, ['Auto-generation could not resolve byebuster schedule constraints.'], [], None
 
 
 def judge_preside_rank(judge):
@@ -411,19 +608,18 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
 def assign_free_scoring_judges(request, round_num):
     tournament = request.user.tournament
     if tournament.is_elim_round(round_num):
-        request.session['extra'] = {'errors': ['Free scoring judge assignment is only available for preliminary rounds.']}
+        set_pairing_banner(request, tournament, ['Free scoring judge assignment is only available for preliminary rounds.'])
         return redirect('tourney:pairing_index')
 
     assigned_count = assign_free_scoring_judges_for_round(tournament, round_num)
     extra = request.session.get('extra', {})
-    if extra.get('auto_pairing_conflicts') and extra.get('tournament_id') != tournament.pk:
+    if extra.get('tournament_id') != tournament.pk:
         extra = {}
     extra['errors'] = [
         f'Assigned {assigned_count} free available judge(s) as scoring judges for {tournament.get_round_label(round_num)}. '
         f'Only {tournament.judges} ballot(s) per round will count toward results.'
     ]
-    if extra.get('auto_pairing_conflicts'):
-        extra['tournament_id'] = tournament.pk
+    extra['tournament_id'] = tournament.pk
     request.session['extra'] = extra
     return redirect('tourney:pairing_index')
 
@@ -448,19 +644,42 @@ def get_pairing_letters(division, count):
 def generate_prelim_pairings(request):
     tournament = request.user.tournament
     if not tournament.randomize_prelims:
-        request.session['extra'] = {'errors': ['Random preliminary generation is turned off in tournament settings.']}
+        set_pairing_banner(request, tournament, ['Random preliminary generation is turned off in tournament settings.'])
         return redirect('tourney:pairing_index')
     if Pairing.objects.filter(tournament=tournament).exists():
-        request.session['extra'] = {'errors': ['Delete existing pairings before generating all preliminary rounds automatically.']}
+        set_pairing_banner(request, tournament, ['Delete existing pairings before generating all preliminary rounds automatically.'])
         return redirect('tourney:pairing_index')
 
     divisions = ['Disney', 'Universal'] if tournament.split_division else [None]
+    odd_pool_exists = any(len(get_group_teams_for_pairing(tournament, division)) % 2 == 1 for division in divisions)
+    byebuster_options = None
+    if odd_pool_exists:
+        if request.method != 'POST':
+            form = ByebusterGenerateForm(tournament=tournament, divisions=divisions)
+            return render(request, 'tourney/pairing/byebuster_generate.html', {'form': form})
+        form = ByebusterGenerateForm(request.POST, tournament=tournament, divisions=divisions)
+        if not form.is_valid():
+            return render(request, 'tourney/pairing/byebuster_generate.html', {'form': form})
+        byebuster_options = form.cleaned_data
+
     schedules = {}
     errors = []
     pairing_conflicts = []
+    byebuster_teams = []
     for division in divisions:
         teams = get_group_teams_for_pairing(tournament, division)
-        schedule, schedule_errors, schedule_conflicts = build_random_prelim_schedule(teams, tournament.prelim_rounds)
+        if len(teams) % 2 == 1:
+            schedule, schedule_errors, schedule_conflicts, byebuster_team = build_byebuster_prelim_schedule(
+                teams,
+                tournament.prelim_rounds,
+                byebuster_options['counted_rounds'],
+                byebuster_options['byebuster_school'],
+                byebuster_options['distribution'],
+            )
+            if byebuster_team:
+                byebuster_teams.append(byebuster_team)
+        else:
+            schedule, schedule_errors, schedule_conflicts = build_random_prelim_schedule(teams, tournament.prelim_rounds)
         if schedule_errors:
             errors.extend(schedule_errors if division is None else [f'{division}: {error}' for error in schedule_errors])
         else:
@@ -469,11 +688,14 @@ def generate_prelim_pairings(request):
                 conflict['division'] = division
             pairing_conflicts.extend(schedule_conflicts)
     if errors:
-        request.session['extra'] = {'errors': errors + ['Please create or edit pairings manually.']}
+        set_pairing_banner(request, tournament, errors + ['Please create or edit pairings manually.'])
         return redirect('tourney:pairing_index')
 
     try:
         with transaction.atomic():
+            Team.objects.filter(user__tournament=tournament).update(byebuster=False)
+            for byebuster_team in byebuster_teams:
+                Team.objects.filter(pk=byebuster_team.pk).update(byebuster=True)
             for round_num in range(1, tournament.prelim_rounds + 1):
                 round_objects = []
                 pairings_for_round = []
@@ -505,15 +727,18 @@ def generate_prelim_pairings(request):
                     pairing.final_submit = True
                     pairing.save(update_fields=['final_submit'])
                     sync_ballots_for_pairing(pairing)
+            for byebuster_team in byebuster_teams:
+                mark_random_byebuster_exclusion(byebuster_team)
     except ValidationError as exc:
-        request.session['extra'] = {'errors': [str(exc), 'Please edit pairings manually.']}
+        set_pairing_banner(request, tournament, [str(exc), 'Please edit pairings manually.'])
         return redirect('tourney:pairing_index')
 
-    request.session['extra'] = {
-        'errors': ['Preliminary rounds were auto-generated. Review them before publishing.'],
-        'auto_pairing_conflicts': pairing_conflicts,
-        'tournament_id': tournament.pk,
-    }
+    set_pairing_banner(
+        request,
+        tournament,
+        ['Preliminary rounds were auto-generated. Review them before publishing.'],
+        auto_pairing_conflicts=pairing_conflicts,
+    )
     return redirect('tourney:pairing_index')
 
 
@@ -531,6 +756,19 @@ def sync_ballots_for_pairing(pairing):
             for ballot in Ballot.objects.filter(round=round).all():
                 if ballot.judge not in round.judges:
                     Ballot.objects.filter(round=round, judge=ballot.judge).delete()
+
+
+def mark_random_byebuster_exclusion(byebuster_team):
+    ballots = list(Ballot.objects.filter(round__pairing__tournament=byebuster_team.user.tournament).filter(
+        Q(round__p_team=byebuster_team) | Q(round__d_team=byebuster_team)
+    ))
+    if not ballots:
+        return False
+    ballot = random.choice(ballots)
+    ballot.byebuster_excluded_team = byebuster_team
+    ballot.save(update_fields=['byebuster_excluded_team'])
+    byebuster_team.save()
+    return True
 
 
 def build_round_formset(pairing_capacity, extra_forms):
@@ -670,7 +908,7 @@ def pairing_index(request):
     }
     if request.session.get('extra'):
         extra = request.session['extra']
-        if extra.get('auto_pairing_conflicts') and extra.get('tournament_id') != tournament.pk:
+        if extra.get('tournament_id') != tournament.pk:
             request.session.pop('extra', None)
         else:
             dict.update(extra)
@@ -923,7 +1161,7 @@ def delete_pairing(request, round_num):
                 tournament=request.user.tournament, round_num=round_num).delete()
         else:
             errors.append('You can only delete the last pairing!')
-    request.session['extra'] = {'errors': errors}
+    set_pairing_banner(request, request.user.tournament, errors)
     return redirect('tourney:pairing_index')
 
     # request, 'tourney/pairing/main.html', {'errors':errors})
@@ -1231,8 +1469,9 @@ def generate_passwords(request):
                     random.choices(string.ascii_letters + string.digits, k=4))
             if not worksheet.cell(row=i, column=16).value and worksheet.cell(row=i, column=1).value:
                 wb_changed = True
-                worksheet.cell(row=i, column=16).value = request.user.tournament.short_name+'_'+''.join(
-                    worksheet.cell(row=i, column=1).value.split(' '))
+                team_name = normalize_import_username(worksheet.cell(row=i, column=1).value)
+                tournament_prefix = normalize_import_username(request.user.tournament.short_name)
+                worksheet.cell(row=i, column=16).value = f'{tournament_prefix}_{team_name}'
 
         worksheet = wb["Judges"]
         n = worksheet.max_row
@@ -1252,14 +1491,18 @@ def generate_passwords(request):
                     random.choices(string.ascii_letters + string.digits, k=4))
             if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
                 wb_changed = True
+                first_name = normalize_import_username(first_name)
+                last_name = normalize_import_username(last_name)
+                tournament_prefix = normalize_import_username(request.user.tournament.short_name)
                 worksheet.cell(
-                    row=i, column=judge_username_col).value = f"{request.user.tournament.short_name}_{first_name.lower()}_{last_name.lower()}"
+                    row=i, column=judge_username_col).value = f"{tournament_prefix}_{first_name}_{last_name}"
 
         response = HttpResponse(content_type='application/vnd.ms-excel')
         wb.save(response)
         return response
 
 
+@transaction.non_atomic_requests
 @user_passes_test(lambda u: u.is_staff)
 def load_teams_and_judges(request):
     if "GET" == request.method:
@@ -1272,6 +1515,7 @@ def load_teams_and_judges(request):
         return render(request, 'admin/load_excel.html', {"list": team_list + judge_list})
 
 
+@transaction.non_atomic_requests
 @user_passes_test(lambda u: u.is_staff)
 def load_teams(request):
     if "GET" == request.method:
@@ -1296,12 +1540,6 @@ def load_teams_wrapper(request, wb):
         if not team_name:
             continue
 
-        if Team.objects.filter(user__tournament=request.user.tournament, team_name=team_name).exists():
-            pk = Team.objects.get(
-                user__tournament=request.user.tournament, team_name=team_name).pk
-        else:
-            pk = None
-
         school = worksheet.cell(i, 2).value
         j = 3
         team_roster = []
@@ -1311,40 +1549,48 @@ def load_teams_wrapper(request, wb):
         message = ''
         username = worksheet.cell(i, 16).value
         try:
-            if Team.objects.filter(pk=pk).exists():
-                Team.objects.filter(pk=pk).update(
-                    team_name=team_name, school=school)
-                team = Team.objects.get(pk=pk)
-                message += f' update {team_name} \n'
-            else:
-                raw_password = worksheet.cell(i, 17).value
-                if raw_password:
+            with transaction.atomic():
+                if Team.objects.filter(user__tournament=request.user.tournament, team_name=team_name).exists():
+                    team = Team.objects.get(user__tournament=request.user.tournament, team_name=team_name)
+                else:
+                    team = None
+
+                if team:
+                    Team.objects.filter(pk=team.pk).update(
+                        team_name=team_name, school=school)
+                    team = Team.objects.get(pk=team.pk)
+                    message += f' update {team_name} \n'
+                else:
+                    raw_password = worksheet.cell(i, 17).value
+                    if not username:
+                        raise ValueError(f'Missing username for team {team_name}')
+                    if not raw_password:
+                        raise ValueError(f'Missing password for team {team_name}')
                     user = User(username=username, raw_password=raw_password, is_team=True, is_judge=False,
                                 tournament=request.user.tournament)
                     user.set_password(raw_password)
                     user.save()
-                    with transaction.atomic():
-                        team = Team(user=user, team_name=team_name,
-                                    school=school)
-                        team.save()
+                    team = Team(user=user, team_name=team_name,
+                                school=school)
+                    team.save()
                     message += f' create {team_name} \n'
-            created_roster = []
-            updated_roster = []
-            for name in team_roster:
-                name = re.sub(r'\([^)]*\)', '', name).strip()
-                if Competitor.objects.filter(team=team, name=name).exists():
-                    updated_roster.append(name)
-                    Competitor.objects.filter(
-                        team=team, name=name).update(team=team, name=name)
-                else:
-                    created_roster.append(name)
-                    Competitor.objects.create(name=name, team=team)
-            if created_roster:
-                str_created_roster = ' , '.join(created_roster)
-                message += f' created roster {str_created_roster} \n'
-            if updated_roster:
-                str_updated_roster = ','.join(updated_roster)
-                message += f' updated roster {str_updated_roster} \n'
+                created_roster = []
+                updated_roster = []
+                for name in team_roster:
+                    name = re.sub(r'\([^)]*\)', '', name).strip()
+                    if Competitor.objects.filter(team=team, name=name).exists():
+                        updated_roster.append(name)
+                        Competitor.objects.filter(
+                            team=team, name=name).update(team=team, name=name)
+                    else:
+                        created_roster.append(name)
+                        Competitor.objects.create(name=name, team=team)
+                if created_roster:
+                    str_created_roster = ' , '.join(created_roster)
+                    message += f' created roster {str_created_roster} \n'
+                if updated_roster:
+                    str_updated_roster = ','.join(updated_roster)
+                    message += f' updated roster {str_updated_roster} \n'
 
         except Exception as e:
             message += str(e)
@@ -1400,31 +1646,32 @@ def load_judges_wrapper(request, wb):
 
         message = ''
         try:
-            if Judge.objects.filter(user__username=username).exists():
-                message += f'update judge {username} \n'
-                judge = Judge.objects.get(user__username=username)
-                user = judge.user
-                user.first_name = first_name
-                user.last_name = last_name
-                user.tournament = request.user.tournament
-                user.save()
+            with transaction.atomic():
+                if Judge.objects.filter(user__username=username).exists():
+                    message += f'update judge {username} \n'
+                    judge = Judge.objects.get(user__username=username)
+                    user = judge.user
+                    user.first_name = first_name
+                    user.last_name = last_name
+                    user.tournament = request.user.tournament
+                    user.save()
 
-                judge.preside = preside
-                for index, field_name in enumerate(Judge.availability_field_names()):
-                    setattr(judge, field_name, availability[index] if index < len(availability) else False)
-                judge.save()
-            else:
-                message += f'create judge {username} \n'
-                user = User(username=username,
-                            first_name=first_name, last_name=last_name,
-                            is_team=False, is_judge=True, tournament=request.user.tournament)
-                user.set_password(raw_password)
-                user.save()
-                judge = Judge(user=user, preside=preside)
-                for index, field_name in enumerate(Judge.availability_field_names()):
-                    setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                    judge.preside = preside
+                    for index, field_name in enumerate(Judge.availability_field_names()):
+                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                    judge.save()
+                else:
+                    message += f'create judge {username} \n'
+                    user = User(username=username,
+                                first_name=first_name, last_name=last_name,
+                                is_team=False, is_judge=True, tournament=request.user.tournament)
+                    user.set_password(raw_password)
+                    user.save()
+                    judge = Judge(user=user, preside=preside)
+                    for index, field_name in enumerate(Judge.availability_field_names()):
+                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
 
-                judge.save()
+                    judge.save()
 
         except Exception as e:
             message += str(e)
@@ -1434,6 +1681,7 @@ def load_judges_wrapper(request, wb):
     return list, wb_changed
 
 
+@transaction.non_atomic_requests
 @user_passes_test(lambda u: u.is_staff)
 def load_judges(request):
     if "GET" == request.method:

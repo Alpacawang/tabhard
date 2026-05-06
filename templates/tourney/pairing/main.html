@@ -35,11 +35,11 @@
 		<h1>Pairings</h1>
 			{% if show_generate_prelims %}
 				<div class="alert alert-info mb-3" role="alert">
-					Generate all preliminary pairings and judge assignments at once before editing individual rounds.
+					Generate all preliminary pairings at once. Judges will be assigned automatically when enough eligible judges are loaded.
 				</div>
 				<div class="mb-3">
 					<a href="{% url 'tourney:generate_prelim_pairings' %}">
-						<button type="button" class="button button-primary" onclick="return confirm('Generate pairings and judge assignments for all preliminary rounds?');">Generate Pairings For All Prelim Rounds</button>
+						<button type="button" class="button button-primary" onclick="return confirm('Generate pairings for all preliminary rounds? Judges will be assigned when enough eligible judges are loaded.');">Generate Pairings For All Prelim Rounds</button>
 					</a>
 				</div>
 			{% endif %}
@@ -125,6 +125,9 @@
 						<button type="button" class="button button-primary m-2" >Checkin Judges</button>
 					</a>
 					{% if pairing.0.round_num <= user.tournament.prelim_rounds %}
+					<a href="{% url 'tourney:assign_judges' pairing.0.round_num %}">
+						<button type="button" class="button button-primary m-2" onclick="return confirm('Assign judges for {{ pairing.0 }}? This may replace current judge assignments for this round.');">Assign Judges</button>
+					</a>
 					<a href="{% url 'tourney:assign_free_scoring_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Assign free available judges for {{ pairing.0 }} as scoring judges? Only the configured number of ballots will count toward results.');">Assign Free Scoring Judges</button>
 					</a>

@@ -742,9 +742,10 @@ def judge_preserves_existing_assignments(judge, round_obj):
     return True
 
 
-def assign_judges_for_rounds(tournament, round_num, round_objects):
-    target_judges = max(tournament.judges, tournament.required_judges)
-    target_judges = min(target_judges, tournament.get_max_judges_for_round(round_num))
+def assign_judges_for_rounds(tournament, round_num, round_objects, target_judges=None):
+    if target_judges is None:
+        target_judges = max(tournament.judges, tournament.required_judges)
+    target_judges = min(max(1, target_judges), tournament.get_max_judges_for_round(round_num))
     available = list(Judge.objects.filter(user__tournament=tournament))
     checked_in = [judge for judge in available if judge.checkin and judge.get_availability(round_num)]
     judge_pool = checked_in if checked_in else [judge for judge in available if judge.get_availability(round_num)]
@@ -772,6 +773,51 @@ def assign_judges_for_rounds(tournament, round_num, round_objects):
         for judge in selected:
             used_judges.add(judge)
     return True
+
+
+def assign_judges_for_existing_round(tournament, round_num):
+    pairings = Pairing.objects.filter(tournament=tournament, round_num=round_num)
+    round_objects = list(Round.objects.filter(pairing__in=pairings).order_by('pairing__division', 'courtroom'))
+    if not round_objects:
+        return False
+
+    target_judges = min(tournament.required_judges, tournament.get_max_judges_for_round(round_num))
+    if not assign_judges_for_rounds(tournament, round_num, round_objects, target_judges=target_judges):
+        return False
+
+    for round_obj in round_objects:
+        assigned_judges = [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]
+        assigned_count = len([judge for judge in assigned_judges if judge])
+        if assigned_count < 3:
+            round_obj.extra_judge = None
+        if assigned_count < 2:
+            round_obj.scoring_judge = None
+        round_obj.save(update_fields=['presiding_judge', 'scoring_judge', 'extra_judge'])
+        round_obj.additional_judges.clear()
+    for pairing in pairings:
+        pairing.final_submit = True
+        pairing.save(update_fields=['final_submit'])
+        sync_ballots_for_pairing(pairing)
+    return True
+
+
+@user_passes_test(lambda u: u.is_staff)
+def assign_judges(request, round_num):
+    tournament = request.user.tournament
+    if tournament.is_elim_round(round_num):
+        set_pairing_banner(request, tournament, ['Automatic judge assignment is only available for preliminary rounds.'])
+        return redirect('tourney:pairing_index')
+
+    target_judges = min(tournament.required_judges, tournament.get_max_judges_for_round(round_num))
+    if assign_judges_for_existing_round(tournament, round_num):
+        set_pairing_banner(request, tournament, [f'Assigned {target_judges} judge(s) per courtroom for {tournament.get_round_label(round_num)}.'])
+    else:
+        set_pairing_banner(
+            request,
+            tournament,
+            [f'Unable to assign judges for {tournament.get_round_label(round_num)}. Check judge availability, check-in status, and conflicts.'],
+        )
+    return redirect('tourney:pairing_index')
 
 
 def assign_free_scoring_judges_for_round(tournament, round_num):
@@ -925,6 +971,8 @@ def generate_prelim_pairings(request):
             Team.objects.filter(user__tournament=tournament).update(byebuster=False)
             for byebuster_team in byebuster_teams:
                 Team.objects.filter(pk=byebuster_team.pk).update(byebuster=True)
+            assigned_judge_rounds = []
+            unassigned_judge_rounds = []
             for round_num in range(1, tournament.prelim_rounds + 1):
                 round_objects = []
                 pairings_for_round = []
@@ -947,20 +995,28 @@ def generate_prelim_pairings(request):
                         )
                         round_objects.append(round_obj)
 
-                if not assign_judges_for_rounds(tournament, round_num, round_objects):
-                    raise ValidationError(f'Unable to auto-assign judges for {tournament.get_round_label(round_num)}.')
-
-                for round_obj in round_objects:
-                    round_obj.save()
-                for pairing in pairings_for_round:
-                    pairing.final_submit = True
-                    pairing.save(update_fields=['final_submit'])
-                    sync_ballots_for_pairing(pairing)
+                if assign_judges_for_rounds(tournament, round_num, round_objects):
+                    assigned_judge_rounds.append(tournament.get_round_label(round_num))
+                    for round_obj in round_objects:
+                        round_obj.save(update_fields=['presiding_judge', 'scoring_judge', 'extra_judge'])
+                    for pairing in pairings_for_round:
+                        pairing.final_submit = True
+                        pairing.save(update_fields=['final_submit'])
+                        sync_ballots_for_pairing(pairing)
+                else:
+                    unassigned_judge_rounds.append(tournament.get_round_label(round_num))
     except ValidationError as exc:
         set_pairing_banner(request, tournament, [str(exc), 'Please edit pairings manually.'])
         return redirect('tourney:pairing_index')
 
     messages = ['Preliminary rounds were auto-generated. Review them before publishing.']
+    if assigned_judge_rounds and not unassigned_judge_rounds:
+        messages.append('Judges were auto-assigned for all generated preliminary rounds.')
+    elif assigned_judge_rounds:
+        messages.append('Judges were auto-assigned for: ' + ', '.join(assigned_judge_rounds))
+        messages.append('Pairings were generated without judges for: ' + ', '.join(unassigned_judge_rounds))
+    else:
+        messages.append('Pairings were generated without judges. Use Assign Judges after loading judges.')
     if byebuster_teams:
         messages.append(
             'Byebuster team(s): ' + ', '.join(str(team) for team in byebuster_teams)

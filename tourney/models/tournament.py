@@ -39,7 +39,12 @@ class Tournament(models.Model):
     prelim_rounds = models.IntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(4)],
         default=4,
-        help_text='How many preliminary rounds should be tabbed before elimination rounds?',
+        help_text='How many preliminary rounds are scheduled before elimination rounds?',
+    )
+    team_prelim_rounds = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(4)],
+        default=4,
+        help_text='How many preliminary rounds should each team compete in?',
     )
     randomize_prelims = models.BooleanField(
         default=False,
@@ -106,6 +111,8 @@ class Tournament(models.Model):
             errors['required_judges'] = 'Minimum judges assigned must be between 1 and 3.'
         if self.predetermined_speakers and self.team_size == 3:
             errors['predetermined_speakers'] = 'Predetermined speakers cannot be enabled for 3-person teams.'
+        if self.team_prelim_rounds > self.prelim_rounds:
+            errors['team_prelim_rounds'] = 'Teams cannot compete in more preliminary rounds than are scheduled.'
         for round_num in range(1, self.total_rounds + 1):
             max_judges = self.get_max_judges_for_round(round_num)
             if max_judges < 1 or max_judges > 3:

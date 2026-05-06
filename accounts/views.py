@@ -111,11 +111,11 @@ class Logout(auth_views.LogoutView):
 
     def get(self, request, *args, **kwargs):
         auth_logout(request)
-        return render(request, 'index.html')
+        return redirect('index')
 
     def post(self, request, *args, **kwargs):
         auth_logout(request)
-        return render(request, 'index.html')
+        return redirect('index')
 
 class ChangePassword(auth_views.PasswordChangeView):
     template_name = 'accounts/change_password.html'

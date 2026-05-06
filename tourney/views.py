@@ -246,7 +246,10 @@ def build_prelim_pairings(tournament, round_num, division=None):
     queryset = Team.objects.filter(user__tournament=tournament)
     if division:
         queryset = queryset.filter(division=division)
-    teams = sort_teams(list(queryset))
+    teams = [
+        team for team in sort_teams(list(queryset))
+        if team.current_rounds() < tournament.team_prelim_rounds
+    ]
     if not teams:
         return []
     if round_num % 2 == 0:
@@ -277,14 +280,20 @@ def get_group_teams_for_pairing(tournament, division=None):
 
 
 def get_side_targets(teams, prelim_rounds):
-    base_target = prelim_rounds // 2
-    extra_p_slots = prelim_rounds * (len(teams) // 2) - base_target * len(teams)
+    return get_side_targets_for_appearances({team.pk: prelim_rounds for team in teams}, teams)
+
+
+def get_side_targets_for_appearances(appearance_targets, teams):
+    base_target = {
+        team.pk: appearance_targets[team.pk] // 2
+        for team in teams
+    }
+    extra_p_slots = sum(appearance_targets.values()) // 2 - sum(base_target.values())
     shuffled = teams[:]
     random.shuffle(shuffled)
-    targets = {team.pk: base_target for team in teams}
     for team in shuffled[:extra_p_slots]:
-        targets[team.pk] += 1
-    return targets
+        base_target[team.pk] += 1
+    return base_target
 
 
 def choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_rounds):
@@ -375,7 +384,92 @@ def match_round_teams(p_teams, d_teams, seen_matchups, seen_side_matchups, attem
     return best_pairs, best_penalty
 
 
-def build_random_prelim_schedule(teams, prelim_rounds):
+def get_partial_round_pair_counts(team_count, team_rounds, prelim_rounds, distribution='spread'):
+    max_pairs = team_count // 2
+    total_slots = team_count * team_rounds
+    if total_slots % 2 != 0 or max_pairs < 1:
+        return None
+    total_pairs = total_slots // 2
+    if team_rounds > prelim_rounds or total_pairs < prelim_rounds or total_pairs > prelim_rounds * max_pairs:
+        return None
+    pair_counts = [1] * prelim_rounds
+    remaining = total_pairs - prelim_rounds
+    if distribution == 'concentrate':
+        for index in range(prelim_rounds):
+            add = min(max_pairs - pair_counts[index], remaining)
+            pair_counts[index] += add
+            remaining -= add
+            if remaining == 0:
+                break
+    else:
+        index = 0
+        while remaining > 0:
+            if pair_counts[index] < max_pairs:
+                pair_counts[index] += 1
+                remaining -= 1
+            index = (index + 1) % prelim_rounds
+    if remaining != 0:
+        return None
+    return pair_counts
+
+
+def build_partial_prelim_schedule(teams, prelim_rounds, team_rounds, distribution='spread'):
+    if len(teams) < 2:
+        return None, ['Not enough teams to generate preliminary rounds.'], []
+    pair_counts = get_partial_round_pair_counts(len(teams), team_rounds, prelim_rounds, distribution)
+    if not pair_counts:
+        return None, ['Auto-generation settings are not feasible for this team count and number of preliminary rounds.'], []
+
+    appearance_targets = {team.pk: team_rounds for team in teams}
+    for _ in range(300):
+        appearance_counts = defaultdict(int)
+        side_counts = defaultdict(int)
+        side_targets = get_side_targets_for_appearances(appearance_targets, teams)
+        seen_matchups = set()
+        seen_side_matchups = set()
+        schedule = []
+        conflicts = []
+        failed = False
+        for round_num, pair_count in enumerate(pair_counts, start=1):
+            playing_teams = choose_playing_teams_for_byebuster(
+                teams, appearance_targets, appearance_counts, pair_count * 2, round_num, prelim_rounds
+            )
+            if not playing_teams:
+                failed = True
+                break
+            side_split = choose_petitioner_side(playing_teams, side_targets, side_counts, round_num, prelim_rounds)
+            if not side_split:
+                failed = True
+                break
+            petitioner_teams, respondent_teams = side_split
+            pairs, penalty = match_round_teams(petitioner_teams, respondent_teams, seen_matchups, seen_side_matchups)
+            if not pairs:
+                failed = True
+                break
+            schedule.append(pairs)
+            for p_team, d_team in pairs:
+                conflict_reasons = get_pairing_conflict_reasons(p_team, d_team, seen_matchups, seen_side_matchups)
+                if conflict_reasons:
+                    conflicts.append({
+                        'round': round_num,
+                        'p_team': str(p_team),
+                        'd_team': str(d_team),
+                        'reasons': conflict_reasons,
+                    })
+                for team in [p_team, d_team]:
+                    appearance_counts[team.pk] += 1
+                side_counts[p_team.pk] += 1
+                seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
+                seen_side_matchups.add((p_team.pk, d_team.pk))
+        if not failed and all(appearance_counts[team.pk] == appearance_targets[team.pk] for team in teams):
+            return schedule, [], conflicts
+    return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
+
+
+def build_random_prelim_schedule(teams, prelim_rounds, team_rounds=None):
+    team_rounds = team_rounds or prelim_rounds
+    if team_rounds < prelim_rounds:
+        return build_partial_prelim_schedule(teams, prelim_rounds, team_rounds)
     if len(teams) % 2 != 0:
         return None, ['Auto-generation requires an even number of teams in each pairing pool.']
     if len(teams) < 2:
@@ -483,19 +577,6 @@ def choose_playing_teams_for_byebuster(teams, appearance_targets, appearance_cou
     return playing
 
 
-def get_side_targets_for_appearances(teams, appearance_targets):
-    targets = {}
-    total_petitioner_slots = sum(appearance_targets[team.pk] for team in teams) // 2
-    for team in teams:
-        targets[team.pk] = appearance_targets[team.pk] // 2
-    extra_slots = total_petitioner_slots - sum(targets.values())
-    extra = [team for team in teams if appearance_targets[team.pk] % 2 == 1]
-    random.shuffle(extra)
-    for team in extra[:extra_slots]:
-        targets[team.pk] += 1
-    return targets
-
-
 def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school_choice, distribution):
     if len(teams) % 2 != 1:
         return None, ['Byebuster generation only applies to odd team pools.'], [], None
@@ -512,7 +593,7 @@ def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school
     for _ in range(300):
         appearance_counts = defaultdict(int)
         side_counts = defaultdict(int)
-        side_targets = get_side_targets_for_appearances(teams, appearance_targets)
+        side_targets = get_side_targets_for_appearances(appearance_targets, teams)
         seen_matchups = set()
         seen_side_matchups = set()
         schedule = []
@@ -563,6 +644,20 @@ def judge_preside_rank(judge):
     return 0
 
 
+def judge_available_round_count(judge, tournament):
+    total_rounds = min(max(tournament.total_rounds, 1), 9)
+    return sum(1 for round_num in range(1, total_rounds + 1) if judge.get_availability(round_num))
+
+
+def judge_assignment_sort_key(judge, tournament, prefer_presiding=True):
+    preside_rank = -judge_preside_rank(judge) if prefer_presiding else judge_preside_rank(judge)
+    return (
+        judge_available_round_count(judge, tournament),
+        preside_rank,
+        judge.user.username,
+    )
+
+
 def judge_can_cover_round(judge, round_obj, round_num, used_judges):
     if judge in used_judges:
         return False
@@ -580,6 +675,24 @@ def judge_can_cover_round(judge, round_obj, round_num, used_judges):
         if round_obj.p_team in d_judged or round_obj.d_team in p_judged:
             return False
     return True
+
+
+def round_assignment_sort_key(round_obj, round_num, judge_pool):
+    unused_judges = set()
+    valid_presiding_count = sum(
+        1 for judge in judge_pool
+        if judge.preside > 0 and judge_can_cover_round(judge, round_obj, round_num, unused_judges)
+    )
+    valid_judge_count = sum(
+        1 for judge in judge_pool
+        if judge_can_cover_round(judge, round_obj, round_num, unused_judges)
+    )
+    return (
+        valid_presiding_count,
+        valid_judge_count,
+        round_obj.pairing.division or '',
+        round_obj.courtroom or '',
+    )
 
 
 def judge_preserves_existing_assignments(judge, round_obj):
@@ -603,7 +716,8 @@ def assign_judges_for_rounds(tournament, round_num, round_objects):
     available = list(Judge.objects.filter(user__tournament=tournament))
     checked_in = [judge for judge in available if judge.checkin and judge.get_availability(round_num)]
     judge_pool = checked_in if checked_in else [judge for judge in available if judge.get_availability(round_num)]
-    judge_pool = sorted(judge_pool, key=lambda judge: (-judge_preside_rank(judge), judge.user.username))
+    judge_pool = sorted(judge_pool, key=lambda judge: judge_assignment_sort_key(judge, tournament))
+    round_objects = sorted(round_objects, key=lambda round_obj: round_assignment_sort_key(round_obj, round_num, judge_pool))
     used_judges = set()
 
     for round_obj in round_objects:
@@ -613,7 +727,10 @@ def assign_judges_for_rounds(tournament, round_num, round_objects):
         round_obj.presiding_judge = valid_presiding[0]
         used_judges.add(valid_presiding[0])
 
-        scoring_candidates = [judge for judge in judge_pool if judge_can_cover_round(judge, round_obj, round_num, used_judges)]
+        scoring_candidates = [
+            judge for judge in sorted(judge_pool, key=lambda judge: judge_assignment_sort_key(judge, tournament, prefer_presiding=False))
+            if judge_can_cover_round(judge, round_obj, round_num, used_judges)
+        ]
         needed_scoring = max(0, target_judges - 1)
         if len(scoring_candidates) < needed_scoring:
             return False
@@ -633,7 +750,10 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
 
     judge_pool = list(Judge.objects.filter(user__tournament=tournament))
     judge_pool = [judge for judge in judge_pool if judge.get_availability(round_num)]
-    judge_pool = sorted(judge_pool, key=lambda judge: (-judge.checkin, -judge_preside_rank(judge), judge.user.username))
+    judge_pool = sorted(judge_pool, key=lambda judge: (
+        -judge.checkin,
+        *judge_assignment_sort_key(judge, tournament, prefer_presiding=False),
+    ))
     used_judges = {
         judge
         for round_obj in round_objects
@@ -719,9 +839,12 @@ def generate_prelim_pairings(request):
         return redirect('tourney:pairing_index')
 
     divisions = ['Disney', 'Universal'] if tournament.split_division else [None]
-    odd_pool_exists = any(len(get_group_teams_for_pairing(tournament, division)) % 2 == 1 for division in divisions)
+    byebuster_needed = any(
+        len(get_group_teams_for_pairing(tournament, division)) * tournament.team_prelim_rounds % 2 == 1
+        for division in divisions
+    )
     byebuster_options = None
-    if odd_pool_exists:
+    if byebuster_needed:
         if request.method != 'POST':
             form = ByebusterGenerateForm(tournament=tournament, divisions=divisions)
             return render(request, 'tourney/pairing/byebuster_generate.html', {'form': form})
@@ -736,7 +859,7 @@ def generate_prelim_pairings(request):
     byebuster_teams = []
     for division in divisions:
         teams = get_group_teams_for_pairing(tournament, division)
-        if len(teams) % 2 == 1:
+        if len(teams) * tournament.team_prelim_rounds % 2 == 1:
             schedule, schedule_errors, schedule_conflicts, byebuster_team = build_byebuster_prelim_schedule(
                 teams,
                 tournament.prelim_rounds,
@@ -747,7 +870,11 @@ def generate_prelim_pairings(request):
             if byebuster_team:
                 byebuster_teams.append(byebuster_team)
         else:
-            schedule, schedule_errors, schedule_conflicts = build_random_prelim_schedule(teams, tournament.prelim_rounds)
+            schedule, schedule_errors, schedule_conflicts = build_random_prelim_schedule(
+                teams,
+                tournament.prelim_rounds,
+                tournament.team_prelim_rounds,
+            )
         if schedule_errors:
             errors.extend(schedule_errors if division is None else [f'{division}: {error}' for error in schedule_errors])
         else:

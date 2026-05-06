@@ -75,9 +75,12 @@ class TournamentForm(forms.ModelForm):
         team_size = cleaned_data.get('team_size')
         predetermined_speakers = cleaned_data.get('predetermined_speakers')
         total_rounds = cleaned_data.get('prelim_rounds', self.instance.prelim_rounds if self.instance.pk else 4)
+        team_prelim_rounds = cleaned_data.get('team_prelim_rounds', self.instance.team_prelim_rounds if self.instance.pk else total_rounds)
         elim_break = cleaned_data.get('elim_break', self.instance.elim_break if self.instance.pk else 'none')
         if predetermined_speakers and team_size == 3:
             self.add_error('predetermined_speakers', 'Predetermined speakers cannot be enabled for 3-person teams.')
+        if team_prelim_rounds and total_rounds and team_prelim_rounds > total_rounds:
+            self.add_error('team_prelim_rounds', 'Teams cannot compete in more preliminary rounds than are scheduled.')
         elim_counts = {
             'none': 0,
             'finals': 1,
@@ -130,7 +133,7 @@ class ByebusterGenerateForm(forms.Form):
     )
     counted_rounds = forms.TypedChoiceField(
         coerce=int,
-        label='How many rounds should each non-byebuster team count?',
+        label='How many rounds should each non-byebuster team compete in?',
     )
     byebuster_school = forms.ChoiceField(
         label='Which school should the byebuster team come from?',
@@ -149,9 +152,9 @@ class ByebusterGenerateForm(forms.Form):
             teams = list(Team.objects.filter(user__tournament=tournament, division=division).order_by('team_name')) if division else list(Team.objects.filter(user__tournament=tournament).order_by('team_name'))
             if len(teams) % 2 == 1:
                 odd_pools.append(teams)
-        max_counted_rounds = tournament.prelim_rounds - 1
+        max_counted_rounds = tournament.team_prelim_rounds
         feasible_counts = []
-        for counted_rounds in range(1, max_counted_rounds + 1):
+        for counted_rounds in range(max_counted_rounds, max_counted_rounds + 1):
             if all((len(teams) * counted_rounds + 1) % 2 == 0 for teams in odd_pools):
                 feasible_counts.append((counted_rounds, counted_rounds))
         self.fields['counted_rounds'].choices = feasible_counts
@@ -363,9 +366,7 @@ class RoundForm(forms.ModelForm):
             form_judges = [cleaned_data.get('presiding_judge'), cleaned_data.get('scoring_judge'),
                            cleaned_data.get('extra_judge')] + list(cleaned_data.get('additional_judges') or [])
             for form in self.other_formset:
-                if form.cleaned_data == {} and not DEBUG:
-                    raise ValidationError('You don\'t have enough rounds.')
-                elif form.cleaned_data == {} and DEBUG:
+                if form.cleaned_data == {}:
                     continue
 
                 other_form_judges = [form.cleaned_data.get('presiding_judge'),
@@ -384,6 +385,8 @@ class RoundForm(forms.ModelForm):
         for k, v in self.instance.__dict__.items():
             if k in ['p_team_id','d_team_id','presiding_judge_id','scoring_judge_id','extra_judge_id'] and v != None:
                 would_save = True
+        if self.instance.pk:
+            would_save = True
         if would_save:
             instance = super().save(commit=commit)
             if commit and 'additional_judges' in self.cleaned_data:
@@ -411,13 +414,15 @@ class PairingFormSet(BaseInlineFormSet):
             for form in self.forms:
                 if self.can_delete and self._should_delete_form(form):
                     continue
-                if form.cleaned_data == {} and not DEBUG:
-                    raise ValidationError('You don\'t have enough rounds.')
-                elif form.cleaned_data == {} and DEBUG:
+                if form.cleaned_data == {}:
                     continue
 
                 teams = [form.cleaned_data.get('p_team'),form.cleaned_data.get('d_team')]
+                if not any(teams):
+                    continue
                 for team in teams:
+                    if team is None:
+                        continue
                     if team in existing_teams:
                         errors.append(f'{team} used twice!')
                     existing_teams.append(team)

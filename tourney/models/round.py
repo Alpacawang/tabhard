@@ -129,6 +129,13 @@ class Round(models.Model):
             if self.p_team == self.d_team:
                 errors.append(f'{self.p_team} can\'t compete against itself!')
             if not is_elim and not waive_conflicts:
+                for team in [self.p_team, self.d_team]:
+                    existing_count = (
+                        team.p_rounds.exclude(pk=self.pk).filter(pairing__round_num__lte=self.pairing.tournament.prelim_rounds).count()
+                        + team.d_rounds.exclude(pk=self.pk).filter(pairing__round_num__lte=self.pairing.tournament.prelim_rounds).count()
+                    )
+                    if existing_count + 1 > self.pairing.tournament.team_prelim_rounds:
+                        errors.append(f"{team} is already scheduled for its allowed preliminary rounds")
                 if self.p_team.next_side(self.pairing.round_num) == 'd':
                     errors.append(f"{self.p_team} is supposed to play d this round")
                 if self.d_team.next_side(self.pairing.round_num) == 'p':

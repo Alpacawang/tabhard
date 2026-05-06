@@ -66,6 +66,10 @@ def normalize_import_username(username):
     return re.sub(r'[^a-zA-Z0-9_-]+', '_', str(username or '').strip()).strip('_').lower()
 
 
+def normalize_import_value(value):
+    return str(value or '').strip()
+
+
 def get_import_username_for_tournament(tournament, username):
     base = normalize_import_username(username)
     tournament_prefix = normalize_import_username(tournament.short_name or tournament.name or 'tournament')
@@ -83,6 +87,34 @@ def get_import_username_for_tournament(tournament, username):
         candidate = f'{localized_base}_{index}'
         index += 1
     return candidate
+
+
+def get_judge_import_username(tournament, first_name, last_name):
+    first_name = normalize_import_username(first_name)
+    last_name = normalize_import_username(last_name)
+    tournament_prefix = normalize_import_username(tournament.short_name or tournament.name or 'tournament')
+    return f'{tournament_prefix}_{first_name}_{last_name}'.strip('_')
+
+
+def get_judge_import_name_key(first_name, last_name):
+    return (
+        re.sub(r'\s+', ' ', normalize_import_value(first_name)).lower(),
+        re.sub(r'\s+', ' ', normalize_import_value(last_name)).lower(),
+    )
+
+
+def find_existing_import_judge(tournament, username, first_name, last_name):
+    if username and Judge.objects.filter(user__username=username).exists():
+        return Judge.objects.get(user__username=username)
+
+    first_name_key, last_name_key = get_judge_import_name_key(first_name, last_name)
+    if not first_name_key:
+        return None
+    for judge in Judge.objects.filter(user__tournament=tournament).select_related('user'):
+        if get_judge_import_name_key(judge.user.first_name, judge.user.last_name) == (first_name_key, last_name_key):
+            return judge
+    return None
+
 
 try:
     from tabeasy_secrets.secret import str_int
@@ -1731,11 +1763,12 @@ def generate_passwords(request):
                     random.choices(string.ascii_letters + string.digits, k=4))
             if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
                 wb_changed = True
-                first_name = normalize_import_username(first_name)
-                last_name = normalize_import_username(last_name)
-                tournament_prefix = normalize_import_username(request.user.tournament.short_name)
                 worksheet.cell(
-                    row=i, column=judge_username_col).value = f"{tournament_prefix}_{first_name}_{last_name}"
+                    row=i, column=judge_username_col).value = get_judge_import_username(
+                        request.user.tournament,
+                        first_name,
+                        last_name,
+                    )
 
         response = HttpResponse(content_type='application/vnd.ms-excel')
         wb.save(response)
@@ -1850,9 +1883,10 @@ def load_judges_wrapper(request, wb):
     total_rounds = min(request.user.tournament.total_rounds, 9)
     judge_username_col = 4 + total_rounds
     judge_password_col = judge_username_col + 1
+    seen_judge_keys = set()
     for i in range(2, n + 1):
-        first_name = worksheet.cell(i, 1).value
-        last_name = worksheet.cell(i, 2).value
+        first_name = normalize_import_value(worksheet.cell(i, 1).value)
+        last_name = normalize_import_value(worksheet.cell(i, 2).value)
 
         if not worksheet.cell(row=i, column=judge_password_col).value:
             wb_changed = True
@@ -1861,14 +1895,26 @@ def load_judges_wrapper(request, wb):
         if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
             wb_changed = True
             worksheet.cell(
-                row=i, column=judge_username_col).value = f"{first_name.lower()}_{last_name.lower()}"
+                row=i, column=judge_username_col).value = get_judge_import_username(
+                    request.user.tournament,
+                    first_name,
+                    last_name,
+                )
 
-        username = worksheet.cell(i, judge_username_col).value
+        username = normalize_import_username(worksheet.cell(i, judge_username_col).value)
         if username == None or username == '':
             continue
+        if worksheet.cell(i, judge_username_col).value != username:
+            wb_changed = True
+            worksheet.cell(i, judge_username_col).value = username
 
         if last_name == None or last_name == '':
             last_name = ' '
+        judge_key = (username, get_judge_import_name_key(first_name, last_name))
+        if judge_key in seen_judge_keys:
+            list.append(f' SKIPPED duplicate judge row {username} \n')
+            continue
+        seen_judge_keys.add(judge_key)
         raw_password = worksheet.cell(i, judge_password_col).value
         preside = worksheet.cell(i, 3).value
         if preside in ['CIN', 'No preference']:
@@ -1887,10 +1933,17 @@ def load_judges_wrapper(request, wb):
         message = ''
         try:
             with transaction.atomic():
-                if Judge.objects.filter(user__username=username).exists():
+                judge = find_existing_import_judge(
+                    request.user.tournament,
+                    username,
+                    first_name,
+                    last_name,
+                )
+                if judge:
                     message += f'update judge {username} \n'
-                    judge = Judge.objects.get(user__username=username)
                     user = judge.user
+                    if user.username != username and not User.objects.filter(username=username).exists():
+                        user.username = username
                     user.first_name = first_name
                     user.last_name = last_name
                     user.tournament = request.user.tournament

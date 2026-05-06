@@ -107,6 +107,7 @@ class Login(auth_views.LoginView):
     template_name = 'accounts/login.html'
 
 class Logout(auth_views.LogoutView):
+    http_method_names = ['get', 'post', 'options']
     next_page = reverse_lazy('index')
 
     def get(self, request, *args, **kwargs):

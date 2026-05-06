@@ -96,6 +96,10 @@ def get_judge_import_username(tournament, first_name, last_name):
     return f'{tournament_prefix}_{first_name}_{last_name}'.strip('_')
 
 
+def get_legacy_judge_import_username(first_name, last_name):
+    return f'{normalize_import_username(first_name)}_{normalize_import_username(last_name)}'.strip('_')
+
+
 def get_judge_import_name_key(first_name, last_name):
     return (
         re.sub(r'\s+', ' ', normalize_import_value(first_name)).lower(),
@@ -103,17 +107,35 @@ def get_judge_import_name_key(first_name, last_name):
     )
 
 
-def find_existing_import_judge(tournament, username, first_name, last_name):
-    if username and Judge.objects.filter(user__username=username).exists():
-        return Judge.objects.get(user__username=username)
+def find_existing_import_user(tournament, username, first_name, last_name):
+    usernames = [
+        normalize_import_username(username),
+        get_judge_import_username(tournament, first_name, last_name),
+        get_legacy_judge_import_username(first_name, last_name),
+    ]
+    seen_usernames = set()
+    for candidate in usernames:
+        if not candidate or candidate in seen_usernames:
+            continue
+        seen_usernames.add(candidate)
+        user = User.objects.filter(username=candidate).first()
+        if user:
+            return user
 
     first_name_key, last_name_key = get_judge_import_name_key(first_name, last_name)
     if not first_name_key:
         return None
-    for judge in Judge.objects.filter(user__tournament=tournament).select_related('user'):
-        if get_judge_import_name_key(judge.user.first_name, judge.user.last_name) == (first_name_key, last_name_key):
-            return judge
+    for user in User.objects.filter(tournament=tournament, is_judge=True):
+        if get_judge_import_name_key(user.first_name, user.last_name) == (first_name_key, last_name_key):
+            return user
     return None
+
+
+def get_user_judge(user):
+    try:
+        return user.judge
+    except Judge.DoesNotExist:
+        return None
 
 
 try:
@@ -1939,7 +1961,8 @@ def load_judges_wrapper(request, wb):
     total_rounds = min(request.user.tournament.total_rounds, 9)
     judge_username_col = 4 + total_rounds
     judge_password_col = judge_username_col + 1
-    seen_judge_keys = set()
+    seen_usernames = set()
+    seen_name_keys = set()
     for i in range(2, n + 1):
         first_name = normalize_import_value(worksheet.cell(i, 1).value)
         last_name = normalize_import_value(worksheet.cell(i, 2).value)
@@ -1966,11 +1989,12 @@ def load_judges_wrapper(request, wb):
 
         if last_name == None or last_name == '':
             last_name = ' '
-        judge_key = (username, get_judge_import_name_key(first_name, last_name))
-        if judge_key in seen_judge_keys:
+        name_key = get_judge_import_name_key(first_name, last_name)
+        if username in seen_usernames or name_key in seen_name_keys:
             list.append(f' SKIPPED duplicate judge row {username} \n')
             continue
-        seen_judge_keys.add(judge_key)
+        seen_usernames.add(username)
+        seen_name_keys.add(name_key)
         raw_password = worksheet.cell(i, judge_password_col).value
         preside = worksheet.cell(i, 3).value
         if preside in ['CIN', 'No preference']:
@@ -1989,15 +2013,15 @@ def load_judges_wrapper(request, wb):
         message = ''
         try:
             with transaction.atomic():
-                judge = find_existing_import_judge(
+                user = find_existing_import_user(
                     request.user.tournament,
                     username,
                     first_name,
                     last_name,
                 )
+                judge = get_user_judge(user) if user else None
                 if judge:
-                    message += f'update judge {username} \n'
-                    user = judge.user
+                    message += f'update judge {user.username} \n'
                     if user.username != username and not User.objects.filter(username=username).exists():
                         user.username = username
                     user.first_name = first_name
@@ -2006,6 +2030,23 @@ def load_judges_wrapper(request, wb):
                     user.save()
 
                     judge.preside = preside
+                    for index, field_name in enumerate(Judge.availability_field_names()):
+                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                    judge.save()
+                elif user:
+                    message += f'create judge profile for existing account {user.username} \n'
+                    if user.username != username and not User.objects.filter(username=username).exists():
+                        user.username = username
+                    user.first_name = first_name
+                    user.last_name = last_name
+                    user.is_team = False
+                    user.is_judge = True
+                    user.tournament = request.user.tournament
+                    if raw_password:
+                        user.raw_password = raw_password
+                        user.set_password(raw_password)
+                    user.save()
+                    judge = Judge(user=user, preside=preside)
                     for index, field_name in enumerate(Judge.availability_field_names()):
                         setattr(judge, field_name, availability[index] if index < len(availability) else False)
                     judge.save()

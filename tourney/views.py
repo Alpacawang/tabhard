@@ -70,6 +70,65 @@ def normalize_import_value(value):
     return str(value or '').strip()
 
 
+def normalize_excel_header(value):
+    value = re.sub(r'[^a-zA-Z0-9]+', ' ', str(value or '').strip().lower())
+    return re.sub(r'\s+', ' ', value).strip()
+
+
+def header_matches(value, expected):
+    value = normalize_excel_header(value)
+    expected = normalize_excel_header(expected)
+    return value == expected or value.startswith(f'{expected} ')
+
+
+def find_judge_header_row(worksheet):
+    for row_num in range(1, min(worksheet.max_row, 10) + 1):
+        values = [normalize_excel_header(worksheet.cell(row_num, col).value) for col in range(1, worksheet.max_column + 1)]
+        if 'first name' in values and 'last name' in values:
+            return row_num
+    return 1
+
+
+def find_header_column(worksheet, header_row, expected):
+    for col in range(1, worksheet.max_column + 1):
+        if header_matches(worksheet.cell(header_row, col).value, expected):
+            return col
+    return None
+
+
+def append_header_column(worksheet, header_row, label):
+    col = worksheet.max_column + 1
+    worksheet.cell(row=header_row, column=col).value = label
+    return col
+
+
+def get_judge_sheet_columns(tournament, worksheet, create_missing=False):
+    header_row = find_judge_header_row(worksheet)
+    first_name_col = find_header_column(worksheet, header_row, 'First Name') or 1
+    last_name_col = find_header_column(worksheet, header_row, 'Last Name') or 2
+    preside_col = find_header_column(worksheet, header_row, 'Presiding') or 3
+    username_col = find_header_column(worksheet, header_row, 'Username')
+    password_col = find_header_column(worksheet, header_row, 'Password')
+    if create_missing and not username_col:
+        username_col = append_header_column(worksheet, header_row, 'Username')
+    if create_missing and not password_col:
+        password_col = append_header_column(worksheet, header_row, 'Password')
+
+    round_columns = {}
+    for round_num in range(1, min(tournament.total_rounds, 9) + 1):
+        round_columns[round_num] = find_header_column(worksheet, header_row, tournament.get_round_label(round_num))
+
+    return {
+        'header_row': header_row,
+        'first_name': first_name_col,
+        'last_name': last_name_col,
+        'preside': preside_col,
+        'username': username_col,
+        'password': password_col,
+        'rounds': round_columns,
+    }
+
+
 def get_import_username_for_tournament(tournament, username):
     base = normalize_import_username(username)
     tournament_prefix = normalize_import_username(tournament.short_name or tournament.name or 'tournament')
@@ -565,15 +624,25 @@ def build_random_prelim_schedule(teams, prelim_rounds, team_rounds=None):
     return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
 
 
-def get_byebuster_round_pair_counts(team_count, counted_rounds, prelim_rounds, distribution):
+def get_byebuster_distribution_order(prelim_rounds, lightest_round=None):
+    if not lightest_round:
+        return list(range(prelim_rounds))
+    lightest_index = lightest_round - 1
+    if lightest_index < 0 or lightest_index >= prelim_rounds:
+        return list(range(prelim_rounds))
+    return list(range(lightest_index + 1, prelim_rounds)) + list(range(0, lightest_index)) + [lightest_index]
+
+
+def get_byebuster_round_pair_counts(team_count, counted_rounds, prelim_rounds, distribution, lightest_round=None):
     max_pairs = (team_count - 1) // 2
     total_pairs = (team_count * counted_rounds + 1) // 2
     if counted_rounds >= prelim_rounds or total_pairs < prelim_rounds or total_pairs > prelim_rounds * max_pairs:
         return None
     pair_counts = [1] * prelim_rounds
     remaining = total_pairs - prelim_rounds
+    distribution_order = get_byebuster_distribution_order(prelim_rounds, lightest_round)
     if distribution == 'concentrate':
-        for index in range(prelim_rounds):
+        for index in distribution_order:
             add = min(max_pairs - pair_counts[index], remaining)
             pair_counts[index] += add
             remaining -= add
@@ -582,10 +651,11 @@ def get_byebuster_round_pair_counts(team_count, counted_rounds, prelim_rounds, d
     else:
         index = 0
         while remaining > 0:
-            if pair_counts[index] < max_pairs:
-                pair_counts[index] += 1
+            round_index = distribution_order[index]
+            if pair_counts[round_index] < max_pairs:
+                pair_counts[round_index] += 1
                 remaining -= 1
-            index = (index + 1) % prelim_rounds
+            index = (index + 1) % len(distribution_order)
     if remaining != 0:
         return None
     return pair_counts
@@ -631,13 +701,13 @@ def choose_playing_teams_for_byebuster(teams, appearance_targets, appearance_cou
     return playing
 
 
-def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school_choice, distribution):
+def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school_choice, distribution, lightest_round=None):
     if len(teams) % 2 != 1:
         return None, ['Byebuster generation only applies to odd team pools.'], [], None
     byebuster_team = choose_byebuster_team(teams, school_choice)
     if not byebuster_team:
         return None, [f'No team found from school "{school_choice}" in an odd pairing pool.'], [], None
-    pair_counts = get_byebuster_round_pair_counts(len(teams), counted_rounds, prelim_rounds, distribution)
+    pair_counts = get_byebuster_round_pair_counts(len(teams), counted_rounds, prelim_rounds, distribution, lightest_round)
     if not pair_counts:
         return None, ['Byebuster settings are not feasible for this team count and number of preliminary rounds.'], [], None
 
@@ -966,6 +1036,7 @@ def generate_prelim_pairings(request):
                 byebuster_options['counted_rounds'],
                 byebuster_options['byebuster_school'],
                 byebuster_options['distribution'],
+                byebuster_options['lightest_round'],
             )
             if byebuster_team:
                 byebuster_teams.append(byebuster_team)
@@ -1805,9 +1876,6 @@ def generate_passwords(request):
     else:
         excel_file = request.FILES["excel_file"]
         wb = openpyxl.load_workbook(excel_file)
-        total_rounds = min(request.user.tournament.total_rounds, 9)
-        judge_username_col = 4 + total_rounds
-        judge_password_col = judge_username_col + 1
         worksheet = wb["Teams"]
         n = worksheet.max_row
         m = worksheet.max_column
@@ -1824,25 +1892,20 @@ def generate_passwords(request):
                 worksheet.cell(row=i, column=16).value = f'{tournament_prefix}_{team_name}'
 
         worksheet = wb["Judges"]
+        judge_columns = get_judge_sheet_columns(request.user.tournament, worksheet, create_missing=True)
         n = worksheet.max_row
-        m = worksheet.max_column
-        wb_changed = False
-        worksheet.cell(row=1, column=judge_username_col).value = "Username"
-        worksheet.cell(row=1, column=judge_password_col).value = "Password"
-        for round_num in range(1, total_rounds + 1):
-            worksheet.cell(row=1, column=3 + round_num).value = request.user.tournament.get_round_label(round_num)
-        for i in range(2, n + 1):
-            first_name = worksheet.cell(i, 1).value
-            last_name = worksheet.cell(i, 2).value
+        for i in range(judge_columns['header_row'] + 1, n + 1):
+            first_name = worksheet.cell(i, judge_columns['first_name']).value
+            last_name = worksheet.cell(i, judge_columns['last_name']).value
 
-            if not worksheet.cell(row=i, column=judge_password_col).value:
+            if not worksheet.cell(row=i, column=judge_columns['password']).value:
                 wb_changed = True
-                worksheet.cell(row=i, column=judge_password_col).value = ''.join(
+                worksheet.cell(row=i, column=judge_columns['password']).value = ''.join(
                     random.choices(string.ascii_letters + string.digits, k=4))
-            if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
+            if not worksheet.cell(row=i, column=judge_columns['username']).value and first_name and last_name:
                 wb_changed = True
                 worksheet.cell(
-                    row=i, column=judge_username_col).value = get_judge_import_username(
+                    row=i, column=judge_columns['username']).value = get_judge_import_username(
                         request.user.tournament,
                         first_name,
                         last_name,
@@ -1956,36 +2019,35 @@ def load_judges_wrapper(request, wb):
     worksheet = wb["Judges"]
     list = []
     n = worksheet.max_row
-    m = worksheet.max_column
     wb_changed = False
-    total_rounds = min(request.user.tournament.total_rounds, 9)
-    judge_username_col = 4 + total_rounds
-    judge_password_col = judge_username_col + 1
+    judge_columns = get_judge_sheet_columns(request.user.tournament, worksheet, create_missing=True)
     seen_usernames = set()
     seen_name_keys = set()
-    for i in range(2, n + 1):
-        first_name = normalize_import_value(worksheet.cell(i, 1).value)
-        last_name = normalize_import_value(worksheet.cell(i, 2).value)
+    for i in range(judge_columns['header_row'] + 1, n + 1):
+        first_name = normalize_import_value(worksheet.cell(i, judge_columns['first_name']).value)
+        last_name = normalize_import_value(worksheet.cell(i, judge_columns['last_name']).value)
+        if not first_name and not last_name:
+            continue
 
-        if not worksheet.cell(row=i, column=judge_password_col).value:
+        if not worksheet.cell(row=i, column=judge_columns['password']).value:
             wb_changed = True
-            worksheet.cell(row=i, column=judge_password_col).value = ''.join(
+            worksheet.cell(row=i, column=judge_columns['password']).value = ''.join(
                 random.choices(string.ascii_letters + string.digits, k=4))
-        if not worksheet.cell(row=i, column=judge_username_col).value and first_name and last_name:
+        if not worksheet.cell(row=i, column=judge_columns['username']).value and first_name and last_name:
             wb_changed = True
             worksheet.cell(
-                row=i, column=judge_username_col).value = get_judge_import_username(
+                row=i, column=judge_columns['username']).value = get_judge_import_username(
                     request.user.tournament,
                     first_name,
                     last_name,
                 )
 
-        username = normalize_import_username(worksheet.cell(i, judge_username_col).value)
+        username = normalize_import_username(worksheet.cell(i, judge_columns['username']).value)
         if username == None or username == '':
             continue
-        if worksheet.cell(i, judge_username_col).value != username:
+        if worksheet.cell(i, judge_columns['username']).value != username:
             wb_changed = True
-            worksheet.cell(i, judge_username_col).value = username
+            worksheet.cell(i, judge_columns['username']).value = username
 
         if last_name == None or last_name == '':
             last_name = ' '
@@ -1995,20 +2057,17 @@ def load_judges_wrapper(request, wb):
             continue
         seen_usernames.add(username)
         seen_name_keys.add(name_key)
-        raw_password = worksheet.cell(i, judge_password_col).value
-        preside = worksheet.cell(i, 3).value
+        raw_password = worksheet.cell(i, judge_columns['password']).value
+        preside = worksheet.cell(i, judge_columns['preside']).value
         if preside in ['CIN', 'No preference']:
             preside = 2
         elif preside in ['Y', 'Presiding', 'Yes', 'y', 'YES']:
             preside = 1
         else:
             preside = 0
-        availability = []
-        for j in range(4, 4 + total_rounds):
-            if worksheet.cell(i, j).value in ['y', 'YES', 'Y', 'Yes']:
-                availability.append(True)
-            else:
-                availability.append(False)
+        availability_by_round = {}
+        for round_num, col in judge_columns['rounds'].items():
+            availability_by_round[round_num] = bool(col and worksheet.cell(i, col).value in ['y', 'YES', 'Y', 'Yes'])
 
         message = ''
         try:
@@ -2031,7 +2090,7 @@ def load_judges_wrapper(request, wb):
 
                     judge.preside = preside
                     for index, field_name in enumerate(Judge.availability_field_names()):
-                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                        setattr(judge, field_name, availability_by_round.get(index + 1, False))
                     judge.save()
                 elif user:
                     message += f'create judge profile for existing account {user.username} \n'
@@ -2048,7 +2107,7 @@ def load_judges_wrapper(request, wb):
                     user.save()
                     judge = Judge(user=user, preside=preside)
                     for index, field_name in enumerate(Judge.availability_field_names()):
-                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                        setattr(judge, field_name, availability_by_round.get(index + 1, False))
                     judge.save()
                 else:
                     message += f'create judge {username} \n'
@@ -2059,7 +2118,7 @@ def load_judges_wrapper(request, wb):
                     user.save()
                     judge = Judge(user=user, preside=preside)
                     for index, field_name in enumerate(Judge.availability_field_names()):
-                        setattr(judge, field_name, availability[index] if index < len(availability) else False)
+                        setattr(judge, field_name, availability_by_round.get(index + 1, False))
 
                     judge.save()
 

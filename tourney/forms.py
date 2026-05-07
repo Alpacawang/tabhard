@@ -142,6 +142,10 @@ class ByebusterGenerateForm(forms.Form):
         choices=[('spread', 'Spread byes across rounds'), ('concentrate', 'Concentrate byes')],
         label='How should byes be distributed?',
     )
+    lightest_round = forms.TypedChoiceField(
+        coerce=lambda value: None if value == 'auto' else int(value),
+        label='Which scheduled round should have the fewest pairings?',
+    )
 
     def __init__(self, *args, **kwargs):
         tournament = kwargs.pop('tournament')
@@ -163,6 +167,10 @@ class ByebusterGenerateForm(forms.Form):
             if team.school
         })
         self.fields['byebuster_school'].choices = [('random', 'Randomize')] + [(school, school) for school in schools]
+        self.fields['lightest_round'].choices = [('auto', 'Automatic')] + [
+            (round_num, tournament.get_round_label(round_num))
+            for round_num in range(1, tournament.prelim_rounds + 1)
+        ]
         if not feasible_counts:
             self.fields['counted_rounds'].choices = []
 

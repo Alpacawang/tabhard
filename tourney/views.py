@@ -1961,7 +1961,10 @@ def view_ballot_status(request, pairing_id):
     ballots = []
     for round in pairing.rounds.all():
         round.sync_counted_ballots()
-        for ballot in round.ballots.all():
+        round_ballots = list(round.ballots.all())
+        show_counted_overlay = bool(round_ballots) and all(ballot.submit for ballot in round_ballots)
+        for ballot in round_ballots:
+            ballot.show_counted_overlay = show_counted_overlay
             ballots.append(ballot)
     ballots = sorted(ballots, key=lambda x: x.round.courtroom)
     return render(request, 'tourney/tab/view_ballots_status.html', {'ballots': ballots})

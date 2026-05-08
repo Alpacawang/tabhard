@@ -51,12 +51,8 @@
 										<th scope="col">{{pairing.tournament.p_choice}} Team</th>
 										<th scope="col">Respondent Team</th>
 										<th scope="col">Presiding Judge</th>
-										{% if max_judges >= 2 %}
-											<th scope="col">Scoring Judge</th>
-										{% endif %}
-										{% if max_judges >= 3 %}
-											<th scope="col">Scoring Judge</th>
-										{% endif %}
+										<th scope="col">Scoring Judge</th>
+										<th scope="col">Scoring Judge</th>
 										{% if max_judges > 3 %}
 											<th scope="col">Additional Scoring Judges</th>
 										{% endif %}
@@ -71,12 +67,8 @@
 											<td>{% render_field form.p_team class="form-select" %}</td>
 											<td>{% render_field form.d_team class="form-select" %}</td>
 											<td>{% render_field form.presiding_judge class="form-select" %}</td>
-											{% if max_judges >= 2 %}
-												<td>{% render_field form.scoring_judge class="form-select" %}</td>
-											{% endif %}
-											{% if max_judges >= 3 %}
-												<td>{% render_field form.extra_judge class="form-select" %}</td>
-											{% endif %}
+											<td>{% render_field form.scoring_judge class="form-select" %}</td>
+											<td>{% render_field form.extra_judge class="form-select" %}</td>
 											{% if max_judges > 3 %}
 												<td>{% render_field form.additional_judges class="form-select" size="6" %}</td>
 											{% endif %}

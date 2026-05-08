@@ -316,11 +316,6 @@ class RoundForm(forms.ModelForm):
             ).order_by('checkin', 'user__username')
             if not pairing.tournament.is_elim_round(pairing.round_num):
                 self.fields['additional_judges'].widget = forms.MultipleHiddenInput()
-            if max_judges < 2:
-                self.fields['scoring_judge'].widget = forms.HiddenInput()
-                self.fields['extra_judge'].widget = forms.HiddenInput()
-            elif max_judges < 3:
-                self.fields['extra_judge'].widget = forms.HiddenInput()
 
     def _post_clean(self):
         self.instance._waive_conflicts = self.waive_conflicts
@@ -331,15 +326,6 @@ class RoundForm(forms.ModelForm):
         errors = []
         max_judges = 9 if self.instance.pairing.tournament.is_elim_round(self.instance.pairing.round_num) else self.instance.pairing.tournament.get_max_judges_for_round(self.instance.pairing.round_num)
         required_judges = max(1, min(self.instance.pairing.tournament.required_judges, max_judges))
-
-        if max_judges < 2:
-            cleaned_data['scoring_judge'] = None
-            cleaned_data['extra_judge'] = None
-            self.instance.scoring_judge = None
-            self.instance.extra_judge = None
-        elif max_judges < 3:
-            cleaned_data['extra_judge'] = None
-            self.instance.extra_judge = None
 
         if self.instance.pairing.final_submit == True:
             if required_judges >= 1 and not cleaned_data.get('presiding_judge'):
@@ -355,8 +341,9 @@ class RoundForm(forms.ModelForm):
             cleaned_data.get('extra_judge'),
         ] + list(cleaned_data.get('additional_judges') or [])
         form_judges = [judge for judge in form_judges if judge]
-        if len(form_judges) > max_judges:
-            errors.append(f'You can assign at most {max_judges} judge(s) for {self.instance}.')
+        manual_max_judges = max(3, max_judges)
+        if len(form_judges) > manual_max_judges:
+            errors.append(f'You can assign at most {manual_max_judges} judge(s) for {self.instance}.')
         if len(form_judges) != len(set(form_judges)):
             errors.append(f'You assigned the same judge more than once for {self.instance}.')
         if self.instance.pairing.final_submit:

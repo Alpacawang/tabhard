@@ -932,15 +932,11 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
     }
     assigned_count = 0
 
-    for round_obj in round_objects:
-        open_fields = []
-        if not round_obj.scoring_judge:
-            open_fields.append('scoring_judge')
-        if not round_obj.extra_judge:
-            open_fields.append('extra_judge')
-
-        changed_fields = []
-        for field_name in open_fields:
+    changed_rounds = {}
+    for field_name in ['scoring_judge', 'extra_judge']:
+        for round_obj in round_objects:
+            if getattr(round_obj, field_name):
+                continue
             candidates = [
                 judge for judge in judge_pool
                 if judge_can_cover_round(judge, round_obj, round_num, used_judges)
@@ -951,10 +947,11 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
             judge = candidates[0]
             setattr(round_obj, field_name, judge)
             used_judges.add(judge)
-            changed_fields.append(field_name)
+            changed_rounds.setdefault(round_obj, set()).add(field_name)
             assigned_count += 1
-        if changed_fields:
-            round_obj.save(update_fields=changed_fields)
+
+    for round_obj, changed_fields in changed_rounds.items():
+        round_obj.save(update_fields=sorted(changed_fields))
 
     for pairing in pairings:
         sync_ballots_for_pairing(pairing)

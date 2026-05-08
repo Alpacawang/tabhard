@@ -424,6 +424,68 @@ def choose_petitioner_side(teams, side_targets, side_counts, round_num, prelim_r
     return petitioner_teams, respondents
 
 
+def schedule_counts(schedule):
+    appearance_counts = defaultdict(int)
+    side_counts = defaultdict(int)
+    for pairs in schedule:
+        for p_team, d_team in pairs:
+            appearance_counts[p_team.pk] += 1
+            appearance_counts[d_team.pk] += 1
+            side_counts[p_team.pk] += 1
+    return appearance_counts, side_counts
+
+
+def validate_prelim_schedule(schedule, teams, appearance_targets, side_targets):
+    appearance_counts, side_counts = schedule_counts(schedule)
+    errors = []
+    for team in teams:
+        appearances = appearance_counts[team.pk]
+        petitioner_rounds = side_counts[team.pk]
+        if appearances != appearance_targets[team.pk]:
+            errors.append(
+                f'{team} is scheduled for {appearances} preliminary round(s), '
+                f'but should be scheduled for {appearance_targets[team.pk]}.'
+            )
+        if petitioner_rounds != side_targets[team.pk]:
+            errors.append(
+                f'{team} is petitioner in {petitioner_rounds} preliminary round(s), '
+                f'but should be petitioner in {side_targets[team.pk]}.'
+            )
+        if appearance_targets[team.pk] > 1 and petitioner_rounds in [0, appearance_targets[team.pk]]:
+            errors.append(f'{team} is scheduled on only one side.')
+    return errors
+
+
+def choose_petitioner_side_for_schedule(
+    playing_teams,
+    all_teams,
+    appearance_targets,
+    appearance_counts,
+    side_targets,
+    side_counts,
+    round_num,
+    prelim_rounds,
+):
+    for _ in range(100):
+        side_split = choose_petitioner_side(playing_teams, side_targets, side_counts, round_num, prelim_rounds)
+        if not side_split:
+            return None
+        petitioner_teams, respondent_teams = side_split
+        petitioner_ids = {team.pk for team in petitioner_teams}
+        playing_ids = {team.pk for team in playing_teams}
+        feasible = True
+
+        for team in all_teams:
+            remaining_appearances = appearance_targets[team.pk] - appearance_counts[team.pk] - (1 if team.pk in playing_ids else 0)
+            remaining_petitioner = side_targets[team.pk] - side_counts[team.pk] - (1 if team.pk in petitioner_ids else 0)
+            if remaining_appearances < 0 or remaining_petitioner < 0 or remaining_petitioner > remaining_appearances:
+                feasible = False
+                break
+        if feasible:
+            return petitioner_teams, respondent_teams
+    return None
+
+
 def pairing_penalty(p_team, d_team, seen_matchups, seen_side_matchups):
     penalty = 0
     if (p_team.pk, d_team.pk) in seen_side_matchups:
@@ -543,7 +605,16 @@ def build_partial_prelim_schedule(teams, prelim_rounds, team_rounds, distributio
             if not playing_teams:
                 failed = True
                 break
-            side_split = choose_petitioner_side(playing_teams, side_targets, side_counts, round_num, prelim_rounds)
+            side_split = choose_petitioner_side_for_schedule(
+                playing_teams,
+                teams,
+                appearance_targets,
+                appearance_counts,
+                side_targets,
+                side_counts,
+                round_num,
+                prelim_rounds,
+            )
             if not side_split:
                 failed = True
                 break
@@ -567,9 +638,10 @@ def build_partial_prelim_schedule(teams, prelim_rounds, team_rounds, distributio
                 side_counts[p_team.pk] += 1
                 seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
                 seen_side_matchups.add((p_team.pk, d_team.pk))
-        if not failed and all(appearance_counts[team.pk] == appearance_targets[team.pk] for team in teams):
+        validation_errors = [] if failed else validate_prelim_schedule(schedule, teams, appearance_targets, side_targets)
+        if not failed and not validation_errors:
             return schedule, [], conflicts
-    return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
+    return None, ['Auto-generation could not resolve round-count and side-balance constraints. Please edit pairings manually.'], []
 
 
 def build_random_prelim_schedule(teams, prelim_rounds, team_rounds=None):
@@ -582,6 +654,8 @@ def build_random_prelim_schedule(teams, prelim_rounds, team_rounds=None):
         return None, ['Not enough teams to generate preliminary rounds.']
 
     for _ in range(300):
+        appearance_targets = {team.pk: prelim_rounds for team in teams}
+        appearance_counts = defaultdict(int)
         side_targets = get_side_targets(teams, prelim_rounds)
         side_counts = defaultdict(int)
         seen_matchups = set()
@@ -610,9 +684,12 @@ def build_random_prelim_schedule(teams, prelim_rounds, team_rounds=None):
                         'reasons': conflict_reasons,
                     })
                 side_counts[p_team.pk] += 1
+                appearance_counts[p_team.pk] += 1
+                appearance_counts[d_team.pk] += 1
                 seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
                 seen_side_matchups.add((p_team.pk, d_team.pk))
-        if not failed:
+        validation_errors = [] if failed else validate_prelim_schedule(schedule, teams, appearance_targets, side_targets)
+        if not failed and not validation_errors:
             return schedule, [], conflicts
     return None, ['Auto-generation could not resolve school/rematch constraints. Please edit pairings manually.'], []
 
@@ -724,7 +801,16 @@ def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school
             if not playing_teams:
                 failed = True
                 break
-            side_split = choose_petitioner_side(playing_teams, side_targets, side_counts, round_num, prelim_rounds)
+            side_split = choose_petitioner_side_for_schedule(
+                playing_teams,
+                teams,
+                appearance_targets,
+                appearance_counts,
+                side_targets,
+                side_counts,
+                round_num,
+                prelim_rounds,
+            )
             if not side_split:
                 failed = True
                 break
@@ -748,9 +834,10 @@ def build_byebuster_prelim_schedule(teams, prelim_rounds, counted_rounds, school
                 side_counts[p_team.pk] += 1
                 seen_matchups.add(frozenset((p_team.pk, d_team.pk)))
                 seen_side_matchups.add((p_team.pk, d_team.pk))
-        if not failed and all(appearance_counts[team.pk] == appearance_targets[team.pk] for team in teams):
+        validation_errors = [] if failed else validate_prelim_schedule(schedule, teams, appearance_targets, side_targets)
+        if not failed and not validation_errors:
             return schedule, [], conflicts, byebuster_team
-    return None, ['Auto-generation could not resolve byebuster schedule constraints.'], [], None
+    return None, ['Auto-generation could not resolve byebuster round-count and side-balance constraints.'], [], None
 
 
 def judge_preside_rank(judge):

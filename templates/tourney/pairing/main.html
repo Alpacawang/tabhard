@@ -33,6 +33,14 @@
 		{% endif %}
 
 		<h1>Pairings</h1>
+			{% if pairings %}
+				<div class="alert alert-info d-flex justify-content-between align-items-center my-4" role="alert">
+					<span>Assign scoring judges across all preliminary rounds, with optional priority judges and a limited seen-conflict waiver.</span>
+					<a href="{% url 'tourney:assign_global_scoring_judges' %}">
+						<button type="button" class="button button-primary">Assign Scoring Judges</button>
+					</a>
+				</div>
+			{% endif %}
 			{% if show_generate_prelims %}
 				<div class="alert alert-info mb-3" role="alert">
 					Generate all preliminary pairings at once. Judges will be assigned automatically when enough eligible judges are loaded.
@@ -131,6 +139,9 @@
 					<a href="{% url 'tourney:assign_free_scoring_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Assign free available judges for {{ pairing.0 }} as scoring judges? Only the configured number of ballots will count toward results.');">Assign Free Scoring Judges</button>
 					</a>
+					<a href="{% url 'tourney:clear_scoring_judges' pairing.0.round_num %}">
+						<button type="button" class="button button-primary m-2" onclick="return confirm('Clear all scoring judges for {{ pairing.0 }}? Presiding judges will stay assigned.');">Clear Scoring Judges</button>
+					</a>
 					{% endif %}
 					<a href="{% url 'tourney:delete_pairing' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Are you sure you want to delete Pairing {{ pairing.0.round_num }}?');">Delete Pairing</button>
@@ -144,15 +155,6 @@
 				</div>
 				</div>
 				{% endfor %}
-
-			{% if pairings %}
-				<div class="alert alert-info d-flex justify-content-between align-items-center my-4" role="alert">
-					<span>Assign scoring judges across all preliminary rounds, with optional priority judges and a limited seen-conflict waiver.</span>
-					<a href="{% url 'tourney:assign_global_scoring_judges' %}">
-						<button type="button" class="button button-primary">Assign Scoring Judges</button>
-					</a>
-				</div>
-			{% endif %}
 
 	{% if can_add_pairing %}
 	<a href="{% url 'tourney:edit_pairing' next_round %}">

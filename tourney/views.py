@@ -1014,16 +1014,24 @@ def round_scoring_judges(round_obj):
     return [judge for judge in [round_obj.scoring_judge, round_obj.extra_judge] if judge]
 
 
-def global_scoring_slot_sort_key(slot, priority_presiding_judge_ids, priority_presiding_load, candidate_count):
+def global_scoring_slot_sort_key(
+    slot,
+    priority_presiding_judge_ids,
+    priority_presiding_load,
+    scoring_slots_by_round,
+    candidate_count,
+):
     round_obj, field_name = slot
+    round_num = round_obj.pairing.round_num
     priority_rank = round_obj.presiding_judge_id in priority_presiding_judge_ids
     priority_load = priority_presiding_load.get(round_obj.presiding_judge_id, 0) if priority_rank else 0
     return (
         not priority_rank,
         priority_load,
         candidate_count,
+        scoring_slots_by_round[round_num],
         scoring_slot_field_count(round_obj, field_name),
-        round_obj.pairing.round_num,
+        round_num,
         round_obj.pairing.division or '',
         round_obj.courtroom or '',
     )
@@ -1059,6 +1067,7 @@ def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_co
     scoring_round_loads = defaultdict(int)
     total_scoring_loads = defaultdict(int)
     priority_presiding_load = defaultdict(int)
+    scoring_slots_by_round = defaultdict(int)
     for round_obj in round_objects:
         for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge, *list(round_obj.additional_judges.all())]:
             if judge:
@@ -1066,6 +1075,7 @@ def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_co
         for judge in round_scoring_judges(round_obj):
             scoring_round_loads[(judge.pk, round_obj.pairing.round_num)] += 1
             total_scoring_loads[judge.pk] += 1
+            scoring_slots_by_round[round_obj.pairing.round_num] += 1
             if round_obj.presiding_judge_id in priority_presiding_judge_ids:
                 priority_presiding_load[round_obj.presiding_judge_id] += 1
 
@@ -1107,6 +1117,7 @@ def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_co
                     candidate_slot,
                     priority_presiding_judge_ids,
                     priority_presiding_load,
+                    scoring_slots_by_round,
                     len(candidates_by_slot[candidate_slot]),
                 ),
             )[0]
@@ -1128,6 +1139,7 @@ def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_co
             used_judges_by_round[round_num].add(judge)
             scoring_round_loads[(judge.pk, round_num)] += 1
             total_scoring_loads[judge.pk] += 1
+            scoring_slots_by_round[round_num] += 1
             if round_obj.presiding_judge_id in priority_presiding_judge_ids:
                 priority_presiding_load[round_obj.presiding_judge_id] += 1
             assigned_count += 1
@@ -1179,6 +1191,28 @@ def assign_free_scoring_judges(request, round_num):
     ]
     extra['tournament_id'] = tournament.pk
     request.session['extra'] = extra
+    return redirect('tourney:pairing_index')
+
+
+@user_passes_test(lambda u: u.is_staff)
+def clear_scoring_judges(request, round_num):
+    tournament = request.user.tournament
+    pairings = Pairing.objects.filter(tournament=tournament, round_num=round_num)
+    cleared_count = 0
+    for round_obj in Round.objects.filter(pairing__in=pairings):
+        cleared_count += len([judge for judge in [round_obj.scoring_judge, round_obj.extra_judge] if judge])
+        cleared_count += round_obj.additional_judges.count()
+        round_obj.scoring_judge = None
+        round_obj.extra_judge = None
+        round_obj.save(update_fields=['scoring_judge', 'extra_judge'])
+        round_obj.additional_judges.clear()
+    for pairing in pairings:
+        sync_ballots_for_pairing(pairing)
+    set_pairing_banner(
+        request,
+        tournament,
+        [f'Cleared {cleared_count} scoring judge slot(s) for {tournament.get_round_label(round_num)}.'],
+    )
     return redirect('tourney:pairing_index')
 
 

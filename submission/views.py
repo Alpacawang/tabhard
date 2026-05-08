@@ -96,6 +96,8 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         user_team = getattr(self.request.user, "team", None)
         if self.request.user.is_team and user_team and user_team not in self.ballot.round.teams:
             return False
+        if self.request.user.is_team and user_team and self.ballot not in user_team.published_ballots():
+            return False
         return True
 
     def get_object(self, queryset=None):

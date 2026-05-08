@@ -27,7 +27,7 @@ from tabeasy.settings import DEBUG
 from tabeasy.utils.mixins import JudgeOnlyMixin, PassRequestToFormViewMixin, TabOnlyMixin
 from tourney.forms import RoundForm, UpdateConflictForm, UpdateJudgeFriendForm, PairingFormSet, PairingSubmitForm, \
     JudgeForm, CheckinJudgeForm, CompetitorPronounsForm, TournamentForm, CreateTournamentForm, CompetitorForm, TeamForm, \
-    ByebusterGenerateForm
+    ByebusterGenerateForm, GlobalScoringJudgeForm
 from submission.models.ballot import Ballot
 from submission.models.character import Character, CharacterPronouns
 from tourney.models import Tournament
@@ -217,14 +217,7 @@ def sorted_break_teams(tournament, teams=None):
 
 
 def counted_ballots_for_round(round_obj):
-    counted = round_obj.pairing.ballots_counted()
-    ordered_judges = round_obj.judges
-    ordered_ballots = []
-    for judge in ordered_judges:
-        ballot = next((ballot for ballot in round_obj.ballots.all() if ballot.judge_id == judge.pk), None)
-        if ballot:
-            ordered_ballots.append(ballot)
-    return ordered_ballots[:counted]
+    return round_obj.sync_counted_ballots()
 
 
 def get_prelim_stats(team, prelim_rounds):
@@ -834,6 +827,40 @@ def judge_preserves_existing_assignments(judge, round_obj):
     return True
 
 
+def judge_can_cover_scoring_round(judge, round_obj, round_num, used_judges, waive_seen_conflicts=False):
+    if judge in used_judges:
+        return False
+    if not judge.get_availability(round_num):
+        return False
+    for team in round_obj.teams:
+        if team in judge.conflicts.all():
+            return False
+    p_judged, d_judged = judge.judged(round_num)
+    if round_obj.p_team in p_judged:
+        return False
+    if round_obj.d_team in d_judged:
+        return False
+    if not waive_seen_conflicts and round_obj.pairing.tournament.conflict_other_side:
+        if round_obj.p_team in d_judged or round_obj.d_team in p_judged:
+            return False
+    return True
+
+
+def judge_preserves_scoring_assignments(judge, round_obj, waive_seen_conflicts=False):
+    tournament = round_obj.pairing.tournament
+    for existing_round in judge.rounds:
+        if existing_round == round_obj:
+            continue
+        if existing_round.pairing.tournament != tournament:
+            continue
+        if round_obj.p_team == existing_round.p_team or round_obj.d_team == existing_round.d_team:
+            return False
+        if not waive_seen_conflicts and tournament.conflict_other_side:
+            if round_obj.p_team == existing_round.d_team or round_obj.d_team == existing_round.p_team:
+                return False
+    return True
+
+
 def assign_judges_for_rounds(tournament, round_num, round_objects, target_judges=None):
     if target_judges is None:
         target_judges = max(tournament.judges, tournament.required_judges)
@@ -956,6 +983,110 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
     for pairing in pairings:
         sync_ballots_for_pairing(pairing)
     return assigned_count
+
+
+def scoring_judge_sort_key(judge, tournament):
+    return (
+        -judge.checkin,
+        *judge_assignment_sort_key(judge, tournament, prefer_presiding=False),
+    )
+
+
+def global_scoring_round_sort_key(round_obj, priority_presiding_judge_ids):
+    presiding_id = round_obj.presiding_judge_id
+    return (
+        presiding_id not in priority_presiding_judge_ids,
+        round_obj.pairing.round_num,
+        round_obj.pairing.division or '',
+        round_obj.courtroom or '',
+    )
+
+
+def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_conflicts=False):
+    priority_presiding_judge_ids = {judge.pk for judge in (priority_judges or [])}
+    pairings = Pairing.objects.filter(tournament=tournament, round_num__lte=tournament.prelim_rounds)
+    round_objects = list(
+        Round.objects.filter(pairing__in=pairings).select_related(
+            'pairing',
+            'pairing__tournament',
+            'p_team',
+            'd_team',
+        ).order_by('pairing__round_num', 'pairing__division', 'courtroom')
+    )
+    if not round_objects:
+        return 0
+
+    judge_pool = list(Judge.objects.filter(user__tournament=tournament).select_related('user'))
+    judge_pool = sorted(judge_pool, key=lambda judge: scoring_judge_sort_key(judge, tournament))
+    used_judges_by_round = defaultdict(set)
+    for round_obj in round_objects:
+        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]:
+            if judge:
+                used_judges_by_round[round_obj.pairing.round_num].add(judge)
+
+    assigned_count = 0
+    for field_name in ['scoring_judge', 'extra_judge']:
+        sorted_rounds = sorted(
+            round_objects,
+            key=lambda round_obj: global_scoring_round_sort_key(round_obj, priority_presiding_judge_ids),
+        )
+        for round_obj in sorted_rounds:
+            if getattr(round_obj, field_name):
+                continue
+            if field_name == 'extra_judge' and not round_obj.scoring_judge:
+                continue
+            round_num = round_obj.pairing.round_num
+            candidates = [
+                judge for judge in judge_pool
+                if judge_can_cover_scoring_round(
+                    judge,
+                    round_obj,
+                    round_num,
+                    used_judges_by_round[round_num],
+                    waive_seen_conflicts=waive_seen_conflicts,
+                )
+                and judge_preserves_scoring_assignments(
+                    judge,
+                    round_obj,
+                    waive_seen_conflicts=waive_seen_conflicts,
+                )
+            ]
+            if not candidates:
+                continue
+            judge = candidates[0]
+            setattr(round_obj, field_name, judge)
+            round_obj.save(update_fields=[field_name])
+            used_judges_by_round[round_num].add(judge)
+            assigned_count += 1
+
+    for pairing in pairings:
+        sync_ballots_for_pairing(pairing)
+    return assigned_count
+
+
+@user_passes_test(lambda u: u.is_staff)
+def assign_global_scoring_judges_view(request):
+    tournament = request.user.tournament
+    if request.method == 'POST':
+        form = GlobalScoringJudgeForm(request.POST, tournament=tournament)
+        if form.is_valid():
+            priority_judges = []
+            if request.POST.get('mode') == 'priority':
+                priority_judges = form.cleaned_data.get('priority_judges')
+            assigned_count = assign_global_scoring_judges(
+                tournament,
+                priority_judges=priority_judges,
+                waive_seen_conflicts=form.cleaned_data.get('waive_seen_conflicts'),
+            )
+            set_pairing_banner(
+                request,
+                tournament,
+                [f'Assigned {assigned_count} scoring judge slot(s) across preliminary rounds.'],
+            )
+            return redirect('tourney:pairing_index')
+    else:
+        form = GlobalScoringJudgeForm(tournament=tournament)
+    return render(request, 'tourney/pairing/assign_global_scoring_judges.html', {'form': form})
 
 
 @user_passes_test(lambda u: u.is_staff)
@@ -1128,6 +1259,7 @@ def sync_ballots_for_pairing(pairing):
         for judge in judges:
             Ballot.objects.get_or_create(round=round_obj, judge=judge)
         Ballot.objects.filter(round=round_obj).exclude(judge__in=judges).delete()
+        round_obj.sync_counted_ballots()
 
 
 def mark_random_byebuster_exclusion(byebuster_team):
@@ -1721,6 +1853,7 @@ def view_ballot_status(request, pairing_id):
     finalize_pending_byebuster_exclusions(pairing.tournament)
     ballots = []
     for round in pairing.rounds.all():
+        round.sync_counted_ballots()
         for ballot in round.ballots.all():
             ballots.append(ballot)
     ballots = sorted(ballots, key=lambda x: x.round.courtroom)

@@ -57,9 +57,7 @@ class Competitor(models.Model):
                     continue
                 if tournament.is_elim_round(ballot.round.pairing.round_num):
                     continue
-                if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:
-                    continue
-                if tournament.judges == 2 and ballot.judge == ballot.round.extra_judge:
+                if not ballot.counted_for_results:
                     continue
                 total += ballot_section.score or 0
         return total
@@ -86,9 +84,7 @@ class Competitor(models.Model):
                     continue
                 if tournament.is_elim_round(ballot.round.pairing.round_num):
                     continue
-                if tournament.judges == 1 and ballot.judge != ballot.round.presiding_judge:
-                    continue
-                if tournament.judges == 2 and ballot.judge == ballot.round.extra_judge:
+                if not ballot.counted_for_results:
                     continue
                 total += ballot_section.score or 0
         return total

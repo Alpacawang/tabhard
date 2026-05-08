@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% load widget_tweaks %}
+
+{% block content %}
+	<div class="container-md">
+		<h1>Assign Scoring Judges</h1>
+		<form method="post">
+			{% csrf_token %}
+			{% if form.errors %}
+				{% for key, value in form.errors.items %}
+					{% if value %}
+						<div class="alert alert-danger" role="alert">{{ value }}</div>
+					{% endif %}
+				{% endfor %}
+			{% endif %}
+
+			<div class="form-check my-3">
+				{% render_field form.waive_seen_conflicts class="form-check-input" %}
+				<label class="form-check-label" for="{{ form.waive_seen_conflicts.id_for_label }}">
+					{{ form.waive_seen_conflicts.label }}
+				</label>
+			</div>
+
+			<h3>Priority Presiding Judges</h3>
+			<div class="row">
+				{% for checkbox in form.priority_judges %}
+					<div class="col-md-4">
+						<div class="form-check my-1">
+							{{ checkbox.tag }}
+							<label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+						</div>
+					</div>
+				{% endfor %}
+			</div>
+
+			<div class="my-4">
+				<button class="button button-primary" type="submit" name="mode" value="priority">Assign With Priority</button>
+				<button class="button btn-secondary mx-2" type="submit" name="mode" value="auto">Automated Assignment</button>
+				<a href="{% url 'tourney:pairing_index' %}">
+					<button class="button btn-secondary" type="button">Cancel</button>
+				</a>
+			</div>
+		</form>
+	</div>
+{% endblock content %}

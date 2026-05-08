@@ -142,8 +142,17 @@
 					{% endif %}
 
 				</div>
-			</div>
-			{% endfor %}
+				</div>
+				{% endfor %}
+
+			{% if pairings %}
+				<div class="alert alert-info d-flex justify-content-between align-items-center my-4" role="alert">
+					<span>Assign scoring judges across all preliminary rounds, with optional priority judges and a limited seen-conflict waiver.</span>
+					<a href="{% url 'tourney:assign_global_scoring_judges' %}">
+						<button type="button" class="button button-primary">Assign Scoring Judges</button>
+					</a>
+				</div>
+			{% endif %}
 
 	{% if can_add_pairing %}
 	<a href="{% url 'tourney:edit_pairing' next_round %}">

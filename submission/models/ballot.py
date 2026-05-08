@@ -43,6 +43,7 @@ class Ballot(models.Model):
                                    related_name='wit_rank_4', null=True)
     upload = models.FileField(upload_to=user_directory_path, null=True, blank=True)
     submit = models.BooleanField(default=False, help_text='Submit')
+    counted_for_results = models.BooleanField(default=True)
     byebuster_excluded_team = models.ForeignKey(
         Team,
         on_delete=models.SET_NULL,

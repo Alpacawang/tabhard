@@ -3,6 +3,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import models
 from submission.models.captains_meeting import CaptainsMeeting
 from tourney.models.team import Team
+import random
 import re
 
 class Pairing(models.Model):
@@ -74,6 +75,42 @@ class Round(models.Model):
             if self.pk:
                 judges += list(self.additional_judges.all())
             return judges
+
+    def ordered_ballots(self):
+        ballots_by_judge = {ballot.judge_id: ballot for ballot in self.ballots.all()}
+        return [ballots_by_judge[judge.pk] for judge in self.judges if judge.pk in ballots_by_judge]
+
+    def sync_counted_ballots(self):
+        ordered_ballots = self.ordered_ballots()
+        counted = min(self.pairing.ballots_counted(), len(ordered_ballots))
+
+        if not ordered_ballots:
+            return []
+
+        counted_ballots = [ballot for ballot in ordered_ballots if ballot.counted_for_results]
+        if len(counted_ballots) == counted:
+            return counted_ballots
+
+        if counted >= len(ordered_ballots):
+            for ballot in ordered_ballots:
+                if not ballot.counted_for_results:
+                    ballot.counted_for_results = True
+                    ballot.save(update_fields=['counted_for_results'])
+            return ordered_ballots
+
+        if len(counted_ballots) > counted:
+            ballots_to_toss = random.sample(counted_ballots, len(counted_ballots) - counted)
+            for ballot in ballots_to_toss:
+                ballot.counted_for_results = False
+                ballot.save(update_fields=['counted_for_results'])
+        else:
+            uncounted_ballots = [ballot for ballot in ordered_ballots if not ballot.counted_for_results]
+            ballots_to_count = random.sample(uncounted_ballots, counted - len(counted_ballots))
+            for ballot in ballots_to_count:
+                ballot.counted_for_results = True
+                ballot.save(update_fields=['counted_for_results'])
+
+        return [ballot for ballot in ordered_ballots if ballot.counted_for_results]
 
     @property
     def teams(self):

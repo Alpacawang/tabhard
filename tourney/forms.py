@@ -511,6 +511,26 @@ class CheckinJudgeForm(forms.Form):
         self.fields['checkins'].queryset = Judge.objects.filter(checkin=False, pk__in=available_judges_pk)
 
 
+class GlobalScoringJudgeForm(forms.Form):
+    priority_judges = forms.ModelMultipleChoiceField(
+        queryset=Judge.objects.none(),
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        label='Priority presiding judges',
+    )
+    waive_seen_conflicts = forms.BooleanField(
+        required=False,
+        label='Allow judges to see a team again on the opposite side. Same-side repeats and manual conflicts still block assignment.',
+    )
+
+    def __init__(self, *args, **kwargs):
+        tournament = kwargs.pop('tournament')
+        super(GlobalScoringJudgeForm, self).__init__(*args, **kwargs)
+        self.fields['priority_judges'].queryset = Judge.objects.filter(
+            user__tournament=tournament,
+        ).order_by('user__first_name', 'user__last_name', 'user__username')
+
+
 
 class CompetitorPronounsForm(forms.ModelForm):
     class Meta:

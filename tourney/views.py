@@ -894,25 +894,36 @@ def assign_judges_for_rounds(tournament, round_num, round_objects, target_judges
     return True
 
 
-def assign_judges_for_existing_round(tournament, round_num):
+def assign_presiding_judges_for_existing_round(tournament, round_num):
     pairings = Pairing.objects.filter(tournament=tournament, round_num=round_num)
     round_objects = list(Round.objects.filter(pairing__in=pairings).order_by('pairing__division', 'courtroom'))
     if not round_objects:
         return False
 
-    target_judges = min(tournament.required_judges, tournament.get_max_judges_for_round(round_num))
-    if not assign_judges_for_rounds(tournament, round_num, round_objects, target_judges=target_judges):
-        return False
+    available = list(Judge.objects.filter(user__tournament=tournament))
+    checked_in = [judge for judge in available if judge.checkin and judge.get_availability(round_num)]
+    judge_pool = checked_in if checked_in else [judge for judge in available if judge.get_availability(round_num)]
+    judge_pool = sorted(judge_pool, key=lambda judge: judge_assignment_sort_key(judge, tournament))
+    round_objects = sorted(round_objects, key=lambda round_obj: round_assignment_sort_key(round_obj, round_num, judge_pool))
+    used_judges = {
+        judge
+        for round_obj in round_objects
+        for judge in [round_obj.scoring_judge, round_obj.extra_judge, *list(round_obj.additional_judges.all())]
+        if judge
+    }
 
     for round_obj in round_objects:
-        assigned_judges = [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]
-        assigned_count = len([judge for judge in assigned_judges if judge])
-        if assigned_count < 3:
-            round_obj.extra_judge = None
-        if assigned_count < 2:
-            round_obj.scoring_judge = None
-        round_obj.save(update_fields=['presiding_judge', 'scoring_judge', 'extra_judge'])
-        round_obj.additional_judges.clear()
+        valid_presiding = [
+            judge for judge in judge_pool
+            if judge_can_cover_round(judge, round_obj, round_num, used_judges) and judge.preside > 0
+        ]
+        if not valid_presiding:
+            return False
+        round_obj.presiding_judge = valid_presiding[0]
+        used_judges.add(valid_presiding[0])
+
+    for round_obj in round_objects:
+        round_obj.save(update_fields=['presiding_judge'])
     for pairing in pairings:
         pairing.final_submit = True
         pairing.save(update_fields=['final_submit'])
@@ -927,14 +938,13 @@ def assign_judges(request, round_num):
         set_pairing_banner(request, tournament, ['Automatic judge assignment is only available for preliminary rounds.'])
         return redirect('tourney:pairing_index')
 
-    target_judges = min(tournament.required_judges, tournament.get_max_judges_for_round(round_num))
-    if assign_judges_for_existing_round(tournament, round_num):
-        set_pairing_banner(request, tournament, [f'Assigned {target_judges} judge(s) per courtroom for {tournament.get_round_label(round_num)}.'])
+    if assign_presiding_judges_for_existing_round(tournament, round_num):
+        set_pairing_banner(request, tournament, [f'Assigned presiding judges for {tournament.get_round_label(round_num)}.'])
     else:
         set_pairing_banner(
             request,
             tournament,
-            [f'Unable to assign judges for {tournament.get_round_label(round_num)}. Check judge availability, check-in status, and conflicts.'],
+            [f'Unable to assign presiding judges for {tournament.get_round_label(round_num)}. Check judge availability, check-in status, and conflicts.'],
         )
     return redirect('tourney:pairing_index')
 
@@ -954,7 +964,7 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
     used_judges = {
         judge
         for round_obj in round_objects
-        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]
+        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge, *list(round_obj.additional_judges.all())]
         if judge
     }
     assigned_count = 0
@@ -992,13 +1002,40 @@ def scoring_judge_sort_key(judge, tournament):
     )
 
 
-def global_scoring_round_sort_key(round_obj, priority_presiding_judge_ids):
-    presiding_id = round_obj.presiding_judge_id
+def scoring_slot_field_count(round_obj, field_name):
+    if field_name == 'scoring_judge':
+        return 1
+    if field_name == 'extra_judge':
+        return 2
+    return 3
+
+
+def round_scoring_judges(round_obj):
+    return [judge for judge in [round_obj.scoring_judge, round_obj.extra_judge] if judge]
+
+
+def global_scoring_slot_sort_key(slot, priority_presiding_judge_ids, priority_presiding_load, candidate_count):
+    round_obj, field_name = slot
+    priority_rank = round_obj.presiding_judge_id in priority_presiding_judge_ids
+    priority_load = priority_presiding_load.get(round_obj.presiding_judge_id, 0) if priority_rank else 0
     return (
-        presiding_id not in priority_presiding_judge_ids,
+        not priority_rank,
+        priority_load,
+        candidate_count,
+        scoring_slot_field_count(round_obj, field_name),
         round_obj.pairing.round_num,
         round_obj.pairing.division or '',
         round_obj.courtroom or '',
+    )
+
+
+def global_scoring_judge_sort_key(judge, tournament, round_num, scoring_round_loads, total_loads):
+    return (
+        scoring_round_loads[(judge.pk, round_num)],
+        total_loads[judge.pk],
+        judge_available_round_count(judge, tournament),
+        -judge.checkin,
+        judge.user.username,
     )
 
 
@@ -1019,44 +1056,80 @@ def assign_global_scoring_judges(tournament, priority_judges=None, waive_seen_co
     judge_pool = list(Judge.objects.filter(user__tournament=tournament).select_related('user'))
     judge_pool = sorted(judge_pool, key=lambda judge: scoring_judge_sort_key(judge, tournament))
     used_judges_by_round = defaultdict(set)
+    scoring_round_loads = defaultdict(int)
+    total_scoring_loads = defaultdict(int)
+    priority_presiding_load = defaultdict(int)
     for round_obj in round_objects:
-        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge]:
+        for judge in [round_obj.presiding_judge, round_obj.scoring_judge, round_obj.extra_judge, *list(round_obj.additional_judges.all())]:
             if judge:
                 used_judges_by_round[round_obj.pairing.round_num].add(judge)
+        for judge in round_scoring_judges(round_obj):
+            scoring_round_loads[(judge.pk, round_obj.pairing.round_num)] += 1
+            total_scoring_loads[judge.pk] += 1
+            if round_obj.presiding_judge_id in priority_presiding_judge_ids:
+                priority_presiding_load[round_obj.presiding_judge_id] += 1
 
     assigned_count = 0
     for field_name in ['scoring_judge', 'extra_judge']:
-        sorted_rounds = sorted(
-            round_objects,
-            key=lambda round_obj: global_scoring_round_sort_key(round_obj, priority_presiding_judge_ids),
-        )
-        for round_obj in sorted_rounds:
-            if getattr(round_obj, field_name):
-                continue
-            if field_name == 'extra_judge' and not round_obj.scoring_judge:
-                continue
+        while True:
+            slots = []
+            candidates_by_slot = {}
+            for round_obj in round_objects:
+                if getattr(round_obj, field_name):
+                    continue
+                if field_name == 'extra_judge' and not round_obj.scoring_judge:
+                    continue
+                round_num = round_obj.pairing.round_num
+                candidates = [
+                    judge for judge in judge_pool
+                    if judge_can_cover_scoring_round(
+                        judge,
+                        round_obj,
+                        round_num,
+                        used_judges_by_round[round_num],
+                        waive_seen_conflicts=waive_seen_conflicts,
+                    )
+                    and judge_preserves_scoring_assignments(
+                        judge,
+                        round_obj,
+                        waive_seen_conflicts=waive_seen_conflicts,
+                    )
+                ]
+                if candidates:
+                    slot = (round_obj, field_name)
+                    slots.append(slot)
+                    candidates_by_slot[slot] = candidates
+            if not slots:
+                break
+            slot = sorted(
+                slots,
+                key=lambda candidate_slot: global_scoring_slot_sort_key(
+                    candidate_slot,
+                    priority_presiding_judge_ids,
+                    priority_presiding_load,
+                    len(candidates_by_slot[candidate_slot]),
+                ),
+            )[0]
+            round_obj, field_name = slot
             round_num = round_obj.pairing.round_num
-            candidates = [
-                judge for judge in judge_pool
-                if judge_can_cover_scoring_round(
+            candidates = sorted(
+                candidates_by_slot[slot],
+                key=lambda judge: global_scoring_judge_sort_key(
                     judge,
-                    round_obj,
+                    tournament,
                     round_num,
-                    used_judges_by_round[round_num],
-                    waive_seen_conflicts=waive_seen_conflicts,
-                )
-                and judge_preserves_scoring_assignments(
-                    judge,
-                    round_obj,
-                    waive_seen_conflicts=waive_seen_conflicts,
-                )
-            ]
-            if not candidates:
-                continue
+                    scoring_round_loads,
+                    total_scoring_loads,
+                ),
+            )
             judge = candidates[0]
             setattr(round_obj, field_name, judge)
             round_obj.save(update_fields=[field_name])
             used_judges_by_round[round_num].add(judge)
+            scoring_round_loads[(judge.pk, round_num)] += 1
+            total_scoring_loads[judge.pk] += 1
+            if round_obj.presiding_judge_id in priority_presiding_judge_ids:
+                priority_presiding_load[round_obj.presiding_judge_id] += 1
             assigned_count += 1
 
     for pairing in pairings:

@@ -21,7 +21,7 @@ from submission.forms import CharacterPronounsForm
 from submission.models.captains_meeting import CaptainsMeeting
 from submission.models.paradigm import Paradigm, ParadigmPreferenceItem, ParadigmPreference, \
     experience_description_choices
-from submission.models.section import Section, SubSection
+from submission.models.section import BallotSection, CaptainsMeetingSection, Section, SubSection
 from submission.models.spirit import Spirit
 from tabeasy.settings import DEBUG
 from tabeasy.utils.mixins import JudgeOnlyMixin, PassRequestToFormViewMixin, TabOnlyMixin

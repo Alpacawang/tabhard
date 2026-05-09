@@ -23,7 +23,7 @@
 					<tr>
 						<th scope="row">{{ forloop.counter }}</th>
 						<td>{{ competitor }}</td>
-						<td>{{ score }}</td>
+						<td>{{ score|floatformat:2 }}</td>
 						<td>{{ competitor.team }}</td>
 						{% if request.user.tournament.split_division %}
 							<td>{{ competitor.team.division }}</td>

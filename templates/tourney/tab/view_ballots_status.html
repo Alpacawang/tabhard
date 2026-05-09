@@ -23,7 +23,7 @@
 			</thead>
 			<tbody>
 				{% for ballot in ballots %}
-					<tr{% if ballot.show_counted_overlay and ballot.byebuster_excluded_team %} class="table-danger"{% elif ballot.show_counted_overlay and ballot.counted_for_results %} class="table-success"{% endif %}>
+					<tr{% if ballot.show_counted_overlay and ballot.byebuster_excluded_team %} class="table-danger"{% elif ballot.show_counted_overlay and ballot.counted_display %} class="table-success"{% endif %}>
 						<th scope="row">{{ ballot.round.courtroom }}</th>
 						<td>{{ ballot.judge }}</td>
 						<td>{{ ballot.round.p_team }}</td>
@@ -47,7 +47,7 @@
 							{% endif %}
 							{% if ballot.show_counted_overlay and ballot.byebuster_excluded_team %}
 								<div class="text-danger fw-semibold">Tossed for {{ ballot.byebuster_excluded_team }}</div>
-							{% elif ballot.show_counted_overlay and ballot.counted_for_results %}
+							{% elif ballot.show_counted_overlay and ballot.counted_display %}
 								<div class="text-success fw-semibold">Counted</div>
 							{% elif ballot.show_counted_overlay %}
 								<div class="text-muted fw-semibold">Tossed</div>

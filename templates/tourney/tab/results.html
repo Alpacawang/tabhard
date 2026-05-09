@@ -31,27 +31,29 @@
 			</thead>
 			<tbody>
 				{% if request.user.tournament.split_division %}
-					{% for div1_team, div2_team in teams_ranked %}
+					{% for div1_entry, div2_entry in teams_ranked %}
 						<tr>
 							<th scope="row">{{ forloop.counter }}</th>
+							{% with div1_team=div1_entry.0 div1_ballots=div1_entry.1 div1_cs=div1_entry.2 div1_pd=div1_entry.3 div2_team=div2_entry.0 div2_ballots=div2_entry.1 div2_cs=div2_entry.2 div2_pd=div2_entry.3 %}
 							<td>{{ div1_team }} ({{ div1_team.school }})</td>
-							<td>{% if div1_team.locked_prelim_ballots != None %}{{ div1_team.locked_prelim_ballots }}{% else %}{{ div1_team.total_ballots }}{% endif %}</td>
-							<td>{% if div1_team.locked_prelim_cs != None %}{{ div1_team.locked_prelim_cs }}{% else %}{{ div1_team.total_cs }}{% endif %}</td>
-							<td>{% if div1_team.locked_prelim_pd != None %}{{ div1_team.locked_prelim_pd }}{% else %}{{ div1_team.total_pd }}{% endif %}</td>
+							<td>{{ div1_ballots|floatformat:2 }}</td>
+							<td>{{ div1_cs|floatformat:2 }}</td>
+							<td>{{ div1_pd|floatformat:2 }}</td>
 							<td>{{ div2_team }} ({{ div2_team.school }})</td>
-							<td>{% if div2_team.locked_prelim_ballots != None %}{{ div2_team.locked_prelim_ballots }}{% else %}{{ div2_team.total_ballots }}{% endif %}</td>
-							<td>{% if div2_team.locked_prelim_cs != None %}{{ div2_team.locked_prelim_cs }}{% else %}{{ div2_team.total_cs }}{% endif %}</td>
-							<td>{% if div2_team.locked_prelim_pd != None %}{{ div2_team.locked_prelim_pd }}{% else %}{{ div2_team.total_pd }}{% endif %}</td>
+							<td>{{ div2_ballots|floatformat:2 }}</td>
+							<td>{{ div2_cs|floatformat:2 }}</td>
+							<td>{{ div2_pd|floatformat:2 }}</td>
+							{% endwith %}
 						</tr>
 					{% endfor %}
 				{% else %}
-					{% for team in teams_ranked %}
+					{% for team, ballots, cs, pd in teams_ranked %}
 						<tr>
 							<th scope="row">{{ forloop.counter }}</th>
 							<td>{{ team }} ({{ team.school }})</td>
-							<td>{% if team.locked_prelim_ballots != None %}{{ team.locked_prelim_ballots }}{% else %}{{ team.total_ballots }}{% endif %}</td>
-							<td>{% if team.locked_prelim_cs != None %}{{ team.locked_prelim_cs }}{% else %}{{ team.total_cs }}{% endif %}</td>
-							<td>{% if team.locked_prelim_pd != None %}{{ team.locked_prelim_pd }}{% else %}{{ team.total_pd }}{% endif %}</td>
+							<td>{{ ballots|floatformat:2 }}</td>
+							<td>{{ cs|floatformat:2 }}</td>
+							<td>{{ pd|floatformat:2 }}</td>
 						</tr>
 					{% endfor %}
 				{% endif %}

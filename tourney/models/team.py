@@ -79,29 +79,48 @@ class Team(models.Model):
         if self.rounds() != None:
             for round in self.rounds():
                 if round.pairing.publish:
+                    if (
+                        not self.user.tournament.is_elim_round(round.pairing.round_num)
+                        and self.user.tournament.prelim_ballot_count_method == 'average'
+                    ):
+                        for ballot in round.ballots.all():
+                            if ballot.submit and ballot.byebuster_excluded_team_id != self.pk:
+                                ballots.append(ballot)
+                        continue
                     for ballot in round.sync_counted_ballots():
                         if ballot.byebuster_excluded_team_id == self.pk:
                             continue
                         ballots.append(ballot)
         return ballots
 
+    def prelim_result_ballot_weights(self, round):
+        if self.user.tournament.prelim_ballot_count_method != 'average':
+            round.sync_counted_ballots()
+            return [
+                (ballot, 1)
+                for ballot in round.ballots.all()
+                if ballot.counted_for_results and ballot.byebuster_excluded_team_id != self.pk
+            ]
+
+        ballots = [
+            ballot for ballot in round.ballots.all()
+            if ballot.submit and ballot.byebuster_excluded_team_id != self.pk
+        ]
+        if not ballots:
+            return []
+        weight = round.pairing.ballots_counted() / len(ballots)
+        return [(ballot, weight) for ballot in ballots]
+
     def calc_p_ballots(self):
         if self.p_rounds.count() > 0:
             for round in self.p_rounds.all():
                 round.sync_counted_ballots()
-            if self.user.tournament.judges == 1:
-                self.p_ballots = sum([ballot.p_ballot for round in self.p_rounds.all()
-                                      for ballot in round.ballots.all()
-                                      if ballot.judge == round.presiding_judge
-                                      and ballot.counted_for_results
-                                      and ballot.byebuster_excluded_team_id != self.pk
-                                      and not self.user.tournament.is_elim_round(round.pairing.round_num)])
-            else:
-                self.p_ballots = sum([ballot.p_ballot for round in self.p_rounds.all()
-                                      for ballot in round.ballots.all() if
-                                      ballot.counted_for_results and
-                                      ballot.byebuster_excluded_team_id != self.pk and
-                                      not self.user.tournament.is_elim_round(ballot.round.pairing.round_num)])
+            self.p_ballots = sum([
+                ballot.p_ballot * weight
+                for round in self.p_rounds.all()
+                if not self.user.tournament.is_elim_round(round.pairing.round_num)
+                for ballot, weight in self.prelim_result_ballot_weights(round)
+            ])
         else:
             self.p_ballots = 0
 
@@ -109,19 +128,12 @@ class Team(models.Model):
         if self.d_rounds.count() > 0:
             for round in self.d_rounds.all():
                 round.sync_counted_ballots()
-            if self.user.tournament.judges == 1:
-                self.d_ballots = sum([ballot.d_ballot for round in self.d_rounds.all()
-                                      for ballot in round.ballots.all()
-                                      if ballot.judge == round.presiding_judge
-                                      and ballot.counted_for_results
-                                      and ballot.byebuster_excluded_team_id != self.pk
-                                      and not self.user.tournament.is_elim_round(round.pairing.round_num)])
-            else:
-                self.d_ballots = sum([ballot.d_ballot for round in self.d_rounds.all()
-                                      for ballot in round.ballots.all() if
-                                      ballot.counted_for_results and
-                                      ballot.byebuster_excluded_team_id != self.pk and
-                                      not self.user.tournament.is_elim_round(ballot.round.pairing.round_num)])
+            self.d_ballots = sum([
+                ballot.d_ballot * weight
+                for round in self.d_rounds.all()
+                if not self.user.tournament.is_elim_round(round.pairing.round_num)
+                for ballot, weight in self.prelim_result_ballot_weights(round)
+            ])
         else:
             self.d_ballots = 0
 
@@ -137,16 +149,18 @@ class Team(models.Model):
         if self.d_rounds.count() > 0 or self.p_rounds.count() > 0:
             for round in list(self.p_rounds.all()) + list(self.d_rounds.all()):
                 round.sync_counted_ballots()
-            p_pd = sum([ballot.p_pd for round in self.p_rounds.all()
-                        for ballot in round.ballots.all()
-                        if ballot.counted_for_results
-                        if ballot.byebuster_excluded_team_id != self.pk
-                        if not self.user.tournament.is_elim_round(ballot.round.pairing.round_num)])
-            d_pd = sum([ballot.d_pd for round in self.d_rounds.all()
-                        for ballot in round.ballots.all()
-                        if ballot.counted_for_results
-                        if ballot.byebuster_excluded_team_id != self.pk
-                        if not self.user.tournament.is_elim_round(ballot.round.pairing.round_num)])
+            p_pd = sum([
+                ballot.p_pd * weight
+                for round in self.p_rounds.all()
+                if not self.user.tournament.is_elim_round(round.pairing.round_num)
+                for ballot, weight in self.prelim_result_ballot_weights(round)
+            ])
+            d_pd = sum([
+                ballot.d_pd * weight
+                for round in self.d_rounds.all()
+                if not self.user.tournament.is_elim_round(round.pairing.round_num)
+                for ballot, weight in self.prelim_result_ballot_weights(round)
+            ])
             self.total_pd = p_pd + d_pd
         else:
             self.total_pd = 0

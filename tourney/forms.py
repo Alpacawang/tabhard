@@ -61,6 +61,8 @@ class TournamentForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super(TournamentForm, self).__init__(*args, **kwargs)
+        if 'prelim_ballot_count_method' in self.fields:
+            self.fields['prelim_ballot_count_method'].label = 'Extra preliminary ballots'
         for round_num in range(1, 10):
             field_name = f'max_judges_round{round_num}'
             if field_name in self.fields:

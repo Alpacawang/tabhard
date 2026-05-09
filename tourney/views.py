@@ -220,6 +220,25 @@ def counted_ballots_for_round(round_obj):
     return round_obj.sync_counted_ballots()
 
 
+def prelim_result_ballot_weights(round_obj, team):
+    tournament = round_obj.pairing.tournament
+    if tournament.prelim_ballot_count_method != 'average':
+        return [
+            (ballot, 1)
+            for ballot in counted_ballots_for_round(round_obj)
+            if ballot.byebuster_excluded_team_id != team.pk
+        ]
+
+    ballots = [
+        ballot for ballot in round_obj.ballots.all()
+        if ballot.submit and ballot.byebuster_excluded_team_id != team.pk
+    ]
+    if not ballots:
+        return []
+    weight = round_obj.pairing.ballots_counted() / len(ballots)
+    return [(ballot, weight) for ballot in ballots]
+
+
 def get_prelim_stats(team, prelim_rounds):
     ballots = 0
     pd = 0
@@ -227,48 +246,33 @@ def get_prelim_stats(team, prelim_rounds):
         team.d_rounds.filter(pairing__round_num__lte=prelim_rounds)
     )
     for round_obj in rounds:
-        round_ballots = [
-            ballot for ballot in counted_ballots_for_round(round_obj)
-            if ballot.byebuster_excluded_team_id != team.pk
-        ]
+        round_ballot_weights = prelim_result_ballot_weights(round_obj, team)
         if round_obj.p_team == team:
-            ballots += sum(ballot.p_ballot for ballot in round_ballots)
-            pd += sum(ballot.p_pd for ballot in round_ballots)
+            ballots += sum(ballot.p_ballot * weight for ballot, weight in round_ballot_weights)
+            pd += sum(ballot.p_pd * weight for ballot, weight in round_ballot_weights)
         else:
-            ballots += sum(ballot.d_ballot for ballot in round_ballots)
-            pd += sum(ballot.d_pd for ballot in round_ballots)
+            ballots += sum(ballot.d_ballot * weight for ballot, weight in round_ballot_weights)
+            pd += sum(ballot.d_pd * weight for ballot, weight in round_ballot_weights)
     return ballots, pd
+
+
+def prelim_team_stats(team, tournament):
+    ballots, pd = get_prelim_stats(team, tournament.prelim_rounds)
+    cs = sum(get_prelim_stats(opponent, tournament.prelim_rounds)[0] for opponent in team.opponents())
+    return ballots, cs, pd
+
+
+def sorted_prelim_teams(tournament, teams=None):
+    queryset = teams if teams is not None else Team.objects.filter(user__tournament=tournament)
+    ranked = [(team, *prelim_team_stats(team, tournament)) for team in list(queryset)]
+    ranked.sort(key=lambda item: (item[1], item[2], item[3]), reverse=True)
+    return ranked
 
 
 def rank_teams_for_break(tournament, teams=None):
     if teams is None:
-        teams = sorted_break_teams(tournament)
-        if teams and all(team.prelim_seed for team in teams):
-            return [
-                (
-                    team,
-                    team.locked_prelim_ballots if team.locked_prelim_ballots is not None else team.total_ballots,
-                    team.locked_prelim_pd if team.locked_prelim_pd is not None else team.total_pd,
-                )
-                for team in teams
-            ]
-    else:
-        teams = sorted_break_teams(tournament, teams)
-        if teams and all(team.prelim_seed for team in teams):
-            return [
-                (
-                    team,
-                    team.locked_prelim_ballots if team.locked_prelim_ballots is not None else team.total_ballots,
-                    team.locked_prelim_pd if team.locked_prelim_pd is not None else team.total_pd,
-                )
-                for team in teams
-            ]
-    ranked = []
-    for team in teams:
-        ballots, pd = get_prelim_stats(team, tournament.prelim_rounds)
-        ranked.append((team, ballots, pd))
-    ranked.sort(key=lambda item: (item[1], item[2]), reverse=True)
-    return ranked
+        teams = Team.objects.filter(user__tournament=tournament)
+    return [(team, ballots, pd) for team, ballots, cs, pd in sorted_prelim_teams(tournament, teams)]
 
 
 def get_round_winner(round_obj):
@@ -317,15 +321,41 @@ def build_elim_pairings(tournament, round_num):
 
 
 def lock_prelim_results(tournament):
-    teams = sort_teams(Team.objects.filter(user__tournament=tournament))
-    if teams and all(team.prelim_seed for team in teams):
+    teams = sorted_prelim_teams(tournament)
+    if teams and all(team.prelim_seed for team, ballots, cs, pd in teams):
         return
-    for index, team in enumerate(teams, start=1):
+    for index, (team, ballots, cs, pd) in enumerate(teams, start=1):
         team.prelim_seed = index
-        team.locked_prelim_ballots = team.total_ballots
-        team.locked_prelim_cs = team.total_cs
-        team.locked_prelim_pd = team.total_pd
+        team.locked_prelim_ballots = ballots
+        team.locked_prelim_cs = cs
+        team.locked_prelim_pd = pd
         team.save(update_fields=['prelim_seed', 'locked_prelim_ballots', 'locked_prelim_cs', 'locked_prelim_pd'])
+
+
+def average_prelim_individual_score(competitor, tournament):
+    assigned_sections = CaptainsMeetingSection.objects.filter(
+        competitor=competitor,
+        subsection__role='att',
+    ).values_list('captains_meeting__round_id', 'subsection_id')
+    ballot_scores = defaultdict(float)
+
+    for round_id, subsection_id in assigned_sections:
+        ballot_sections = BallotSection.objects.filter(
+            ballot__submit=True,
+            ballot__round_id=round_id,
+            subsection_id=subsection_id,
+        ).select_related('ballot__round__pairing')
+        for ballot_section in ballot_sections:
+            ballot = ballot_section.ballot
+            if tournament.is_elim_round(ballot.round.pairing.round_num):
+                continue
+            if ballot.byebuster_excluded_team_id == competitor.team_id:
+                continue
+            ballot_scores[ballot.pk] += ballot_section.score or 0
+
+    if not ballot_scores:
+        return 0
+    return sum(ballot_scores.values()) / len(ballot_scores)
 
 
 def get_pairing_capacity(tournament, round_num):
@@ -1526,13 +1556,13 @@ def index(request):
 def results(request):
     tournament = request.user.tournament
     if tournament.split_division:
-        div1_teams = sorted_break_teams(
+        div1_teams = sorted_prelim_teams(
             tournament, Team.objects.filter(user__tournament=tournament, division='Disney'))
-        div2_teams = sorted_break_teams(
+        div2_teams = sorted_prelim_teams(
             tournament, Team.objects.filter(user__tournament=tournament, division='Universal'))
         dict = {'teams_ranked': [div1_teams, div2_teams]}
     else:
-        teams = sorted_break_teams(tournament)
+        teams = sorted_prelim_teams(tournament)
         dict = {'teams_ranked': teams}
     return render(request, 'tourney/tab/results.html', dict)
 
@@ -1562,9 +1592,10 @@ def individual_awards(request):
     competitors = list(Competitor.objects.filter(team__user__tournament=tournament))
     ranked = []
     for competitor in competitors:
-        base_score = competitor.total_score
+        base_score = average_prelim_individual_score(competitor, tournament)
         if tournament.individual_award_rank_plus_record:
-            base_score += competitor.team.total_ballots
+            team_ballots, _ = get_prelim_stats(competitor.team, tournament.prelim_rounds)
+            base_score += team_ballots
         ranked.append((competitor, base_score))
     ranked.sort(key=lambda item: item[1], reverse=True)
 
@@ -2056,6 +2087,10 @@ def view_ballot_status(request, pairing_id):
         show_counted_overlay = bool(round_ballots) and all(ballot.submit for ballot in round_ballots)
         for ballot in round_ballots:
             ballot.show_counted_overlay = show_counted_overlay
+            ballot.counted_display = (
+                round.pairing.tournament.prelim_ballot_count_method == 'average'
+                and not round.pairing.tournament.is_elim_round(round.pairing.round_num)
+            ) or ballot.counted_for_results
             ballots.append(ballot)
     ballots = sorted(ballots, key=lambda x: x.round.courtroom)
     return render(request, 'tourney/tab/view_ballots_status.html', {'ballots': ballots})
@@ -2108,7 +2143,17 @@ class TournamentUpdateView(TabOnlyMixin, UpdateView):
         return self.request.user.tournament
 
     def form_valid(self, form):
+        old_method = None
+        if self.object.pk:
+            old_method = Tournament.objects.get(pk=self.object.pk).prelim_ballot_count_method
         response = super().form_valid(form)
+        if old_method and old_method != self.object.prelim_ballot_count_method:
+            Team.objects.filter(user__tournament=self.object).update(
+                prelim_seed=None,
+                locked_prelim_ballots=None,
+                locked_prelim_cs=None,
+                locked_prelim_pd=None,
+            )
         if self.object.predetermined_speakers:
             rounds = Round.objects.filter(pairing__tournament=self.object).select_related(
                 'pairing__tournament',

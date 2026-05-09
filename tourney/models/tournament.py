@@ -16,6 +16,11 @@ ELIM_BREAK_CHOICES = [
     ('finals', 'Finals'),
 ]
 
+PRELIM_BALLOT_COUNT_METHOD_CHOICES = [
+    ('random', 'Randomly toss extra ballots'),
+    ('average', 'Average extra ballots down to ballots counted'),
+]
+
 # def user_directory_path(instance, filename):
 #     # file will be uploaded to MEDIA_ROOT/user_<id>/<filename>
 #     return "tournament_{0}/{1}".format(instance.id, filename)
@@ -83,6 +88,12 @@ class Tournament(models.Model):
                                         help_text='Do you want to hide comments on ballots?')
     judges = models.IntegerField(default=2,
                                  help_text='How many ballots do you count into the result?')
+    prelim_ballot_count_method = models.CharField(
+        max_length=20,
+        choices=PRELIM_BALLOT_COUNT_METHOD_CHOICES,
+        default='random',
+        help_text='How should extra preliminary ballots beyond ballots counted be handled?',
+    )
     required_judges = models.IntegerField(default=2,
                                           help_text='How many judges must be assigned before a round can be finalized?')
     max_judges_round1 = models.IntegerField(default=2)

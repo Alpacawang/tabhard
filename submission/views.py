@@ -59,6 +59,10 @@ def get_predetermined_speaker(captains_meeting, subsection):
     return competitors[speaker_index]
 
 
+def ballot_section_form_prefix(subsection):
+    return f'subsection-{subsection.pk}'
+
+
 def apply_predetermined_speakers(captains_meeting):
     tournament = captains_meeting.round.pairing.tournament
     if not tournament.predetermined_speakers:
@@ -115,7 +119,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
                 context['section_forms'].append(
                     sorted([BallotSectionForm(instance=ballot_section,
                                        subsection=ballot_section.subsection,
-                                       prefix=ballot_section.subsection.__str__(),
+                                       prefix=ballot_section_form_prefix(ballot_section.subsection),
                                        request=self.request)
                      for ballot_section in
                      BallotSection.objects.filter(ballot=self.object, subsection__section=section).all()
@@ -125,7 +129,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
             for section in Section.objects.filter(tournament=tournament).all():
                 context['section_forms'].append(
                     sorted([BallotSectionForm(subsection=subsection, ballot=self.object,
-                                      prefix=subsection.__str__(),
+                                      prefix=ballot_section_form_prefix(subsection),
                                       request=self.request)
                     for subsection in
                     SubSection.objects.filter(section=section).all()],
@@ -149,7 +153,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
                 section_forms.append(
                     sorted([BallotSectionForm(request.POST, instance=ballot_section,
                                        subsection=ballot_section.subsection,
-                                       prefix=ballot_section.subsection.__str__(),
+                                       prefix=ballot_section_form_prefix(ballot_section.subsection),
                                        request=self.request)
                      for ballot_section in
                      BallotSection.objects.filter(ballot=self.object, subsection__section=section).all()
@@ -159,7 +163,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
             for section in Section.objects.filter(tournament=tournament).all():
                 section_forms.append(
                     sorted([BallotSectionForm(request.POST, subsection=subsection, ballot=self.object,
-                                      prefix=subsection.__str__(), request=self.request)
+                                      prefix=ballot_section_form_prefix(subsection), request=self.request)
                      for subsection in
                      SubSection.objects.filter(section=section).all()],
                     key= lambda x: x.init_subsection.sequence)

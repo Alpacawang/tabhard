@@ -24,7 +24,7 @@
 			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
 					<li>
 							<label class="checkbox-label-container">
-									<input type="checkbox" value="{{ value }}" name="conflicts">
+									<input type="checkbox" value="{{ value }}" name="conflicts"{% if value|stringformat:"s" in selected_conflict_ids %} checked{% endif %}>
 									<span class="checkmark"></span>
 									<strong>{{ team.team_name }}</strong>
 									<span>({{ team.school }})</span></a><br/>

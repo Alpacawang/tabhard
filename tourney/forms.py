@@ -468,13 +468,20 @@ class UpdateConflictForm(forms.ModelForm):
     # conflicts_queryset = ( (team, team.school) for team in Team.objects.all() )
     conflicts = CustomModelChoiceField(
         queryset=Team.objects.all(),
-        widget=forms.CheckboxSelectMultiple
+        widget=forms.CheckboxSelectMultiple,
+        required=False,
     )
 
     def __init__(self, *args, **kwargs):
         self.request = kwargs.pop('request', None)
         super(UpdateConflictForm, self).__init__(*args, **kwargs)
         self.fields['conflicts'].queryset = Team.objects.filter(user__tournament=self.request.user.tournament)
+        self.fields['conflicts'].required = False
+
+    def selected_conflict_ids(self):
+        if self.is_bound:
+            return {str(value) for value in self.data.getlist(self.add_prefix('conflicts'))}
+        return {str(team.pk) for team in self.instance.conflicts.all()}
 
 
 class UpdateJudgeFriendForm(forms.ModelForm):

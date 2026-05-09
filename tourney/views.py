@@ -1952,7 +1952,11 @@ def view_individual_judge(request, pk):
         user_form = UpdateConflictForm(instance=judge, request=request)
         judge_form = JudgeForm(instance=judge, request=request)
 
-    context = {'conflict_form': user_form, 'preference_form': judge_form}
+    context = {
+        'conflict_form': user_form,
+        'preference_form': judge_form,
+        'selected_conflict_ids': user_form.selected_conflict_ids(),
+    }
     return render(request, 'tourney/tab/view_individual_judge.html', context)
 
 
@@ -2132,6 +2136,11 @@ class ConflictUpdateView(JudgeOnlyMixin, PassRequestToFormViewMixin, UpdateView)
         form = super(ConflictUpdateView, self).get_form(form_class)
         form.fields['conflicts'].required = False
         return form
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['selected_conflict_ids'] = context['form'].selected_conflict_ids()
+        return context
 
     def get_object(self, queryset=None):
         return self.request.user.judge

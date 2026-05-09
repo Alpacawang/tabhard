@@ -165,7 +165,7 @@
 													{% if show_ballot_scores %}
 														<div class="row align-items-center my-2">
 															<div class="col-8 small">{{ subsection_form.init_subsection.help_text }}</div>
-															<div class="col-4">{% render_field subsection_form.score class="form-select" name="score" %}</div>
+															<div class="col-4">{% render_field subsection_form.score class="form-select" %}</div>
 														</div>
 													{% endif %}
 													{% if not forloop.first %}{{ subsection_form.comment.as_hidden }}{% endif %}
@@ -203,7 +203,7 @@
 													{% if show_ballot_scores %}
 														<div class="row align-items-center my-2">
 															<div class="col-8 small">{{ subsection_form.init_subsection.help_text }}</div>
-															<div class="col-4">{% render_field subsection_form.score class="form-select" name="score" %}</div>
+															<div class="col-4">{% render_field subsection_form.score class="form-select" %}</div>
 														</div>
 													{% endif %}
 													{% if not forloop.first %}{{ subsection_form.comment.as_hidden }}{% endif %}

@@ -110,6 +110,23 @@ class BallotSectionForm(forms.ModelForm):
             )
         return score
 
+    def save(self, commit=True):
+        existing_comment = self.instance.comment
+        saved = super().save(commit=False)
+        submitted_comment = self.cleaned_data.get('comment')
+        ballot_is_being_submitted = bool(self.data.get('submit')) if self.is_bound else False
+        if (
+            self.is_bound
+            and not ballot_is_being_submitted
+            and existing_comment
+            and not submitted_comment
+        ):
+            saved.comment = existing_comment
+        if commit:
+            saved.save()
+            self.save_m2m()
+        return saved
+
 class CharacterPronounsForm(forms.ModelForm):
     class Meta:
         model = CharacterPronouns

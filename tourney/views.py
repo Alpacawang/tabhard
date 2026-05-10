@@ -892,6 +892,23 @@ def judge_assignment_sort_key(judge, tournament, prefer_presiding=True):
     )
 
 
+def judge_team_repeat_penalty(judge, round_obj, round_num):
+    p_judged, d_judged = judge.judged(round_num)
+    penalty = 0
+    penalty += 2 * p_judged.count(round_obj.p_team)
+    penalty += 2 * d_judged.count(round_obj.d_team)
+    penalty += d_judged.count(round_obj.p_team)
+    penalty += p_judged.count(round_obj.d_team)
+    return penalty
+
+
+def judge_round_assignment_sort_key(judge, tournament, round_obj, round_num, prefer_presiding=True):
+    return (
+        judge_team_repeat_penalty(judge, round_obj, round_num),
+        *judge_assignment_sort_key(judge, tournament, prefer_presiding=prefer_presiding),
+    )
+
+
 def judge_can_cover_round(judge, round_obj, round_num, used_judges):
     if judge in used_judges:
         return False
@@ -900,6 +917,8 @@ def judge_can_cover_round(judge, round_obj, round_num, used_judges):
     for team in round_obj.teams:
         if team in judge.conflicts.all():
             return False
+    if round_obj.pairing.tournament.is_elim_round(round_num):
+        return True
     p_judged, d_judged = judge.judged(round_num)
     if round_obj.p_team in p_judged:
         return False
@@ -931,6 +950,8 @@ def round_assignment_sort_key(round_obj, round_num, judge_pool):
 
 def judge_preserves_existing_assignments(judge, round_obj):
     tournament = round_obj.pairing.tournament
+    if tournament.is_elim_round(round_obj.pairing.round_num):
+        return True
     for existing_round in judge.rounds:
         if existing_round == round_obj:
             continue
@@ -952,6 +973,8 @@ def judge_can_cover_scoring_round(judge, round_obj, round_num, used_judges, waiv
     for team in round_obj.teams:
         if team in judge.conflicts.all():
             return False
+    if round_obj.pairing.tournament.is_elim_round(round_num):
+        return True
     p_judged, d_judged = judge.judged(round_num)
     if round_obj.p_team in p_judged:
         return False
@@ -965,6 +988,8 @@ def judge_can_cover_scoring_round(judge, round_obj, round_num, used_judges, waiv
 
 def judge_preserves_scoring_assignments(judge, round_obj, waive_seen_conflicts=False):
     tournament = round_obj.pairing.tournament
+    if tournament.is_elim_round(round_obj.pairing.round_num):
+        return True
     for existing_round in judge.rounds:
         if existing_round == round_obj:
             continue
@@ -990,14 +1015,26 @@ def assign_judges_for_rounds(tournament, round_num, round_objects, target_judges
     used_judges = set()
 
     for round_obj in round_objects:
-        valid_presiding = [judge for judge in judge_pool if judge_can_cover_round(judge, round_obj, round_num, used_judges) and judge.preside > 0]
+        valid_presiding = sorted(
+            [judge for judge in judge_pool if judge_can_cover_round(judge, round_obj, round_num, used_judges) and judge.preside > 0],
+            key=lambda judge: judge_round_assignment_sort_key(judge, tournament, round_obj, round_num),
+        )
         if not valid_presiding:
             return False
         round_obj.presiding_judge = valid_presiding[0]
         used_judges.add(valid_presiding[0])
 
         scoring_candidates = [
-            judge for judge in sorted(judge_pool, key=lambda judge: judge_assignment_sort_key(judge, tournament, prefer_presiding=False))
+            judge for judge in sorted(
+                judge_pool,
+                key=lambda judge: judge_round_assignment_sort_key(
+                    judge,
+                    tournament,
+                    round_obj,
+                    round_num,
+                    prefer_presiding=False,
+                ),
+            )
             if judge_can_cover_round(judge, round_obj, round_num, used_judges)
         ]
         needed_scoring = max(0, target_judges - 1)
@@ -1030,10 +1067,10 @@ def assign_presiding_judges_for_existing_round(tournament, round_num):
     }
 
     for round_obj in round_objects:
-        valid_presiding = [
+        valid_presiding = sorted([
             judge for judge in judge_pool
             if judge_can_cover_round(judge, round_obj, round_num, used_judges) and judge.preside > 0
-        ]
+        ], key=lambda judge: judge_round_assignment_sort_key(judge, tournament, round_obj, round_num))
         if not valid_presiding:
             return False
         round_obj.presiding_judge = valid_presiding[0]
@@ -1094,7 +1131,16 @@ def assign_free_scoring_judges_for_round(tournament, round_num):
             ]
             if not candidates:
                 continue
-            judge = candidates[0]
+            judge = sorted(
+                candidates,
+                key=lambda candidate: judge_round_assignment_sort_key(
+                    candidate,
+                    tournament,
+                    round_obj,
+                    round_num,
+                    prefer_presiding=False,
+                ),
+            )[0]
             setattr(round_obj, field_name, judge)
             used_judges.add(judge)
             changed_rounds.setdefault(round_obj, set()).add(field_name)

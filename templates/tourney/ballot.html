@@ -63,10 +63,19 @@
 							<li class="list-group-item">
 								<div>Click for:</div>
 								<div class="row my-2 px-3">
-									<a class="button button-primary"
-										href="{% url 'submission:captains_meeting' object.round.captains_meeting.pk|int_str %}">
-									Team Information
-									</a>
+									{% if can_swap_elim_sides %}
+										<form method="post" action="{% url 'submission:swap_elim_sides' object.pk|int_str %}">
+											{% csrf_token %}
+											<button class="button button-primary" type="submit" onclick="return confirm('Swap petitioner and respondent for this elimination round? This changes the pairing and all judge ballots.');">
+												Swap Sides
+											</button>
+										</form>
+									{% else %}
+										<a class="button button-primary"
+											href="{% url 'submission:captains_meeting' object.round.captains_meeting.pk|int_str %}">
+										Team Information
+										</a>
+									{% endif %}
 								</div>
 								{% if request.user.tournament.case %}
 									<div class="row my-2 px-3">

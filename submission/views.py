@@ -1,5 +1,6 @@
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
 from django.urls import reverse_lazy
@@ -18,7 +19,7 @@ from tabeasy.utils.mixins import PassRequestToFormViewMixin
 from tabeasy.utils.obfuscation import decode_int
 from tourney.models import Judge
 from tourney.models.team import Team
-from django.contrib.auth.decorators import user_passes_test
+from django.contrib.auth.decorators import login_required, user_passes_test
 
 try:
     from tabeasy_secrets.secret import str_int
@@ -61,6 +62,83 @@ def get_predetermined_speaker(captains_meeting, subsection):
 
 def ballot_section_form_prefix(subsection):
     return f'subsection-{subsection.pk}'
+
+
+def matching_opposite_subsection(subsection):
+    opposite_side = 'D' if subsection.side == 'P' else 'P'
+    return SubSection.objects.filter(
+        section=subsection.section,
+        side=opposite_side,
+        role=subsection.role,
+        type=subsection.type,
+        help_text=subsection.help_text,
+    ).first()
+
+
+def swap_captains_meeting_sections(captains_meeting):
+    swapped_pairs = set()
+    sections = CaptainsMeetingSection.objects.filter(
+        captains_meeting=captains_meeting,
+    ).select_related('subsection')
+    sections_by_subsection = {section.subsection_id: section for section in sections}
+
+    for section in sections:
+        opposite_subsection = matching_opposite_subsection(section.subsection)
+        if not opposite_subsection:
+            continue
+        pair_key = frozenset((section.subsection_id, opposite_subsection.pk))
+        if pair_key in swapped_pairs:
+            continue
+        opposite_section = sections_by_subsection.get(opposite_subsection.pk)
+        if not opposite_section:
+            continue
+        section.competitor, opposite_section.competitor = opposite_section.competitor, section.competitor
+        section.save(update_fields=['competitor'])
+        opposite_section.save(update_fields=['competitor'])
+        swapped_pairs.add(pair_key)
+
+
+def swap_ballot_sections(round_obj):
+    swapped_pairs = set()
+    subsections = SubSection.objects.filter(section__tournament=round_obj.pairing.tournament)
+    for subsection in subsections:
+        opposite_subsection = matching_opposite_subsection(subsection)
+        if not opposite_subsection:
+            continue
+        pair_key = frozenset((subsection.pk, opposite_subsection.pk))
+        if pair_key in swapped_pairs:
+            continue
+        for ballot in round_obj.ballots.all():
+            section = BallotSection.objects.filter(ballot=ballot, subsection=subsection).first()
+            opposite_section = BallotSection.objects.filter(ballot=ballot, subsection=opposite_subsection).first()
+            if not section or not opposite_section:
+                continue
+            section.score, opposite_section.score = opposite_section.score, section.score
+            section.comment, opposite_section.comment = opposite_section.comment, section.comment
+            section.save(update_fields=['score', 'comment'])
+            opposite_section.save(update_fields=['score', 'comment'])
+        swapped_pairs.add(pair_key)
+
+
+@login_required
+def swap_elim_sides(request, encrypted_pk):
+    if request.method != 'POST':
+        return HttpResponseForbidden()
+    ballot = get_object_or_404(Ballot, pk=str_int(encrypted_pk))
+    round_obj = ballot.round
+    user_judge = getattr(request.user, "judge", None)
+    if not request.user.is_judge or user_judge != round_obj.presiding_judge:
+        return HttpResponseForbidden()
+    if not round_obj.pairing.tournament.is_elim_round(round_obj.pairing.round_num):
+        return HttpResponseForbidden()
+
+    with transaction.atomic():
+        round_obj.p_team, round_obj.d_team = round_obj.d_team, round_obj.p_team
+        round_obj.save(update_fields=['p_team', 'd_team'])
+        captains_meeting, _ = CaptainsMeeting.objects.get_or_create(round=round_obj)
+        swap_captains_meeting_sections(captains_meeting)
+        swap_ballot_sections(round_obj)
+    return redirect('submission:ballot', encrypted_pk=encrypted_pk)
 
 
 def apply_predetermined_speakers(captains_meeting):
@@ -111,8 +189,14 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
         context = super().get_context_data(**kwargs)
         tournament = self.object.round.pairing.tournament
         is_team_reader = self.request.user.is_team and not self.request.user.is_staff
+        user_judge = getattr(self.request.user, "judge", None)
         context['show_ballot_scores'] = not is_team_reader or tournament.publish_ballot_scores
         context['show_ballot_comments'] = True
+        context['can_swap_elim_sides'] = (
+            self.request.user.is_judge
+            and user_judge == self.object.round.presiding_judge
+            and tournament.is_elim_round(self.object.round.pairing.round_num)
+        )
         context['section_forms'] = []
         if BallotSection.objects.filter(ballot=self.object).exists():
             for section in Section.objects.filter(tournament=tournament).all():

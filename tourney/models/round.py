@@ -205,7 +205,7 @@ class Round(models.Model):
                                 errors.append(f"{judge} conflicted with team {team}")
 
                     #check if judged
-                    if not waive_conflicts:
+                    if not waive_conflicts and not is_elim:
                         p_judged, d_judged = judge.judged(self.pairing.round_num)
                         if p_judged or d_judged:
                             if not self.p_team.byebuster and self.p_team in p_judged:

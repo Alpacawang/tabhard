@@ -40,6 +40,16 @@ def build_speaker_pairs(section_forms):
     return [grouped[key] for key in sorted(grouped)]
 
 
+def mark_visible_comment_forms(section_forms):
+    for section in section_forms:
+        speaker_groups = build_speaker_pairs([section])
+        for pair in speaker_groups:
+            visible_forms = [forms[0] for forms in [pair.get('P'), pair.get('D')] if forms]
+            for subsection_form in section:
+                subsection_form.save_comment = subsection_form in visible_forms
+    return section_forms
+
+
 def get_primary_subsection(section):
     return section.subsections.order_by('sequence', 'pk').first()
 
@@ -222,6 +232,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
 
         context['section_forms'] = sorted(context['section_forms'],
                                     key= lambda x: x[0].init_subsection.sequence)
+        context['section_forms'] = mark_visible_comment_forms(context['section_forms'])
         context['speaker_pairs'] = build_speaker_pairs(context['section_forms'])
         return context
 
@@ -253,6 +264,7 @@ class BallotUpdateView(LoginRequiredMixin, UserPassesTestMixin, PassRequestToFor
                     key= lambda x: x.init_subsection.sequence)
                 )
         section_forms = sorted(section_forms, key=lambda x: x[0].init_subsection.sequence)
+        section_forms = mark_visible_comment_forms(section_forms)
         is_valid = True
         for section in section_forms:
             for subsection_form in section:

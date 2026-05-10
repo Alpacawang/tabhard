@@ -76,6 +76,7 @@ class BallotSectionForm(forms.ModelForm):
         self.request = kwargs.pop('request')
         self.init_ballot = kwargs.pop('ballot', None)
         self.init_subsection = kwargs.pop('subsection', None)
+        self.save_comment = kwargs.pop('save_comment', True)
         super(BallotSectionForm, self).__init__(*args, **kwargs)
         user_judge = getattr(self.request.user, "judge", None)
         if self.init_ballot:
@@ -122,6 +123,15 @@ class BallotSectionForm(forms.ModelForm):
             current_comment = current_section.comment
             current_revision = current_section.comment_updated_at.isoformat() if current_section.comment_updated_at else ''
         saved = super().save(commit=False)
+        if not self.save_comment:
+            saved.comment = current_comment
+            if commit:
+                if saved.pk:
+                    saved.save(update_fields=['score'])
+                else:
+                    saved.save()
+                self.save_m2m()
+            return saved
         submitted_comment = self.cleaned_data.get('comment')
         submitted_revision = self.cleaned_data.get('comment_revision') or ''
         ballot_is_being_submitted = bool(self.data.get('submit')) if self.is_bound else False

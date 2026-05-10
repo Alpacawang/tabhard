@@ -1051,10 +1051,6 @@ def assign_presiding_judges_for_existing_round(tournament, round_num):
 @user_passes_test(lambda u: u.is_staff)
 def assign_judges(request, round_num):
     tournament = request.user.tournament
-    if tournament.is_elim_round(round_num):
-        set_pairing_banner(request, tournament, ['Automatic judge assignment is only available for preliminary rounds.'])
-        return redirect('tourney:pairing_index')
-
     if assign_presiding_judges_for_existing_round(tournament, round_num):
         set_pairing_banner(request, tournament, [f'Assigned presiding judges for {tournament.get_round_label(round_num)}.'])
     else:
@@ -1294,10 +1290,6 @@ def assign_global_scoring_judges_view(request):
 @user_passes_test(lambda u: u.is_staff)
 def assign_free_scoring_judges(request, round_num):
     tournament = request.user.tournament
-    if tournament.is_elim_round(round_num):
-        set_pairing_banner(request, tournament, ['Free scoring judge assignment is only available for preliminary rounds.'])
-        return redirect('tourney:pairing_index')
-
     assigned_count = assign_free_scoring_judges_for_round(tournament, round_num)
     extra = request.session.get('extra', {})
     if extra.get('tournament_id') != tournament.pk:
@@ -1490,11 +1482,14 @@ def mark_random_byebuster_exclusion(byebuster_team):
     ballots = list(Ballot.objects.filter(round__pairing__tournament=byebuster_team.user.tournament, submit=True).filter(
         Q(round__p_team=byebuster_team) | Q(round__d_team=byebuster_team)
     ))
+    ballots = [
+        ballot for ballot in ballots
+        if not byebuster_team.user.tournament.is_elim_round(ballot.round.pairing.round_num)
+    ]
     if not ballots:
         return False
-    ballot = random.choice(ballots)
-    ballot.byebuster_excluded_team = byebuster_team
-    ballot.save(update_fields=['byebuster_excluded_team'])
+    round_obj = random.choice(list({ballot.round for ballot in ballots}))
+    Ballot.objects.filter(round=round_obj).update(byebuster_excluded_team=byebuster_team)
     byebuster_team.save()
     return True
 
@@ -1502,10 +1497,17 @@ def mark_random_byebuster_exclusion(byebuster_team):
 def finalize_pending_byebuster_exclusions(tournament):
     changed = False
     for byebuster_team in Team.objects.filter(user__tournament=tournament, byebuster=True):
-        if Ballot.objects.filter(
+        existing_exclusions = Ballot.objects.filter(
             round__pairing__tournament=tournament,
             byebuster_excluded_team=byebuster_team,
-        ).exists():
+        )
+        if existing_exclusions.exists():
+            excluded_round_ids = existing_exclusions.values_list('round_id', flat=True).distinct()
+            for round_id in excluded_round_ids:
+                updated = Ballot.objects.filter(round_id=round_id).exclude(
+                    byebuster_excluded_team=byebuster_team,
+                ).update(byebuster_excluded_team=byebuster_team)
+                changed = changed or bool(updated)
             continue
         ballots = list(Ballot.objects.filter(round__pairing__tournament=tournament).filter(
             Q(round__p_team=byebuster_team) | Q(round__d_team=byebuster_team)
@@ -1515,9 +1517,8 @@ def finalize_pending_byebuster_exclusions(tournament):
             if not tournament.is_elim_round(ballot.round.pairing.round_num)
         ]
         if prelim_ballots and all(ballot.submit for ballot in prelim_ballots):
-            ballot = random.choice(prelim_ballots)
-            ballot.byebuster_excluded_team = byebuster_team
-            ballot.save(update_fields=['byebuster_excluded_team'])
+            round_obj = random.choice(list({ballot.round for ballot in prelim_ballots}))
+            Ballot.objects.filter(round=round_obj).update(byebuster_excluded_team=byebuster_team)
             byebuster_team.save()
             changed = True
     return changed

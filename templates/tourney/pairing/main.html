@@ -132,7 +132,6 @@
 					<a href="{% url 'tourney:checkin_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" >Checkin Judges</button>
 					</a>
-					{% if pairing.0.round_num <= user.tournament.prelim_rounds %}
 					<a href="{% url 'tourney:assign_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Assign presiding judges for {{ pairing.0 }}? This may replace current presiding judge assignments for this round.');">Assign Presiding Judges</button>
 					</a>
@@ -142,7 +141,6 @@
 					<a href="{% url 'tourney:clear_scoring_judges' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Clear all scoring judges for {{ pairing.0 }}? Presiding judges will stay assigned.');">Clear Scoring Judges</button>
 					</a>
-					{% endif %}
 					<a href="{% url 'tourney:delete_pairing' pairing.0.round_num %}">
 						<button type="button" class="button button-primary m-2" onclick="return confirm('Are you sure you want to delete Pairing {{ pairing.0.round_num }}?');">Delete Pairing</button>
 					</a>

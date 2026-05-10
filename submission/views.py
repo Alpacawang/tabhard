@@ -32,11 +32,17 @@ def build_speaker_pairs(section_forms):
     for section_form in section_forms:
         if not section_form:
             continue
-        subsection = section_form[0].init_subsection
-        match = re.search(r"Speaker\s*(\d+)", f"{subsection.section.name} {subsection.name}", re.IGNORECASE)
-        speaker_num = int(match.group(1)) if match else ((subsection.sequence + 1) // 2)
-        grouped.setdefault(speaker_num, {"speaker_num": speaker_num, "P": None, "D": None})
-        grouped[speaker_num][subsection.side] = section_form
+        side_forms = {"P": [], "D": []}
+        for subsection_form in section_form:
+            side_forms.setdefault(subsection_form.init_subsection.side, []).append(subsection_form)
+        for side, forms in side_forms.items():
+            if not forms:
+                continue
+            subsection = forms[0].init_subsection
+            match = re.search(r"Speaker\s*(\d+)", f"{subsection.section.name} {subsection.name}", re.IGNORECASE)
+            speaker_num = int(match.group(1)) if match else ((subsection.sequence + 1) // 2)
+            grouped.setdefault(speaker_num, {"speaker_num": speaker_num, "P": None, "D": None})
+            grouped[speaker_num][side] = forms
     return [grouped[key] for key in sorted(grouped)]
 
 

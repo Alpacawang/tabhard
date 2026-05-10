@@ -134,17 +134,14 @@ class BallotSectionForm(forms.ModelForm):
             return saved
         submitted_comment = self.cleaned_data.get('comment')
         submitted_revision = self.cleaned_data.get('comment_revision') or ''
-        ballot_is_being_submitted = bool(self.data.get('submit')) if self.is_bound else False
         if (
             self.is_bound
-            and not ballot_is_being_submitted
             and current_comment
             and not submitted_comment
         ):
             saved.comment = current_comment
         if (
             self.is_bound
-            and not ballot_is_being_submitted
             and self.instance.pk
             and submitted_revision
             and submitted_revision != current_revision

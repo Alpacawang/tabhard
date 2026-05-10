@@ -171,6 +171,7 @@
 										<div class="card-body">
 											{% if pair.P %}
 												{% for subsection_form in pair.P %}
+													{{ subsection_form.comment_revision }}
 													{% if show_ballot_scores %}
 														<div class="row align-items-center my-2">
 															<div class="col-8 small">{{ subsection_form.init_subsection.help_text }}</div>
@@ -209,6 +210,7 @@
 										<div class="card-body">
 											{% if pair.D %}
 												{% for subsection_form in pair.D %}
+													{{ subsection_form.comment_revision }}
 													{% if show_ballot_scores %}
 														<div class="row align-items-center my-2">
 															<div class="col-8 small">{{ subsection_form.init_subsection.help_text }}</div>

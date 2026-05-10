@@ -56,6 +56,7 @@ class BallotSection(models.Model):
                                     related_query_name='ballot_section',null=True)
     score = models.IntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(20)])
     comment = models.TextField(max_length=5000, null=True, blank=True)
+    comment_updated_at = models.DateTimeField(auto_now=True)
     #
     # def clean(self):
     #     if self.ballot.submit and self.score == 0:

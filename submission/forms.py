@@ -63,6 +63,8 @@ class BallotForm(forms.ModelForm):
             raise ValidationError(errors)
 
 class BallotSectionForm(forms.ModelForm):
+    comment_revision = forms.CharField(required=False, widget=forms.HiddenInput)
+
     class Meta:
         model = BallotSection
         fields = ['score','comment']
@@ -100,6 +102,8 @@ class BallotSectionForm(forms.ModelForm):
         self.fields['score'].widget = forms.Select(
             choices=[(i, i) for i in range(max_score + 1)]
         )
+        if self.instance.pk and self.instance.comment_updated_at:
+            self.fields['comment_revision'].initial = self.instance.comment_updated_at.isoformat()
 
     def clean_score(self):
         score = self.cleaned_data.get('score')
@@ -111,17 +115,32 @@ class BallotSectionForm(forms.ModelForm):
         return score
 
     def save(self, commit=True):
-        existing_comment = self.instance.comment
+        current_comment = self.instance.comment
+        current_revision = self.instance.comment_updated_at.isoformat() if self.instance.pk and self.instance.comment_updated_at else ''
+        if self.instance.pk:
+            current_section = BallotSection.objects.get(pk=self.instance.pk)
+            current_comment = current_section.comment
+            current_revision = current_section.comment_updated_at.isoformat() if current_section.comment_updated_at else ''
         saved = super().save(commit=False)
         submitted_comment = self.cleaned_data.get('comment')
+        submitted_revision = self.cleaned_data.get('comment_revision') or ''
         ballot_is_being_submitted = bool(self.data.get('submit')) if self.is_bound else False
         if (
             self.is_bound
             and not ballot_is_being_submitted
-            and existing_comment
+            and current_comment
             and not submitted_comment
         ):
-            saved.comment = existing_comment
+            saved.comment = current_comment
+        if (
+            self.is_bound
+            and not ballot_is_being_submitted
+            and self.instance.pk
+            and submitted_revision
+            and submitted_revision != current_revision
+            and submitted_comment != current_comment
+        ):
+            saved.comment = current_comment
         if commit:
             saved.save()
             self.save_m2m()

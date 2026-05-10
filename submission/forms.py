@@ -138,6 +138,9 @@ class BallotSectionForm(forms.ModelForm):
             self.is_bound
             and current_comment
             and not submitted_comment
+            and self.instance.pk
+            and submitted_revision
+            and submitted_revision != current_revision
         ):
             saved.comment = current_comment
         if (

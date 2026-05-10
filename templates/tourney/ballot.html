@@ -64,6 +64,9 @@
 								<div>Click for:</div>
 								<div class="row my-2 px-3">
 									{% if can_swap_elim_sides %}
+										<button class="button button-primary mb-2" type="button" onclick="alert(Math.random() < 0.5 ? 'Heads' : 'Tails');">
+											Coin Flip
+										</button>
 										<form method="post" action="{% url 'submission:swap_elim_sides' object.pk|int_str %}">
 											{% csrf_token %}
 											<button class="button button-primary" type="submit" onclick="return confirm('Swap petitioner and respondent for this elimination round? This changes the pairing and all judge ballots.');">

@@ -136,6 +136,14 @@ def swap_ballot_sections(round_obj):
         swapped_pairs.add(pair_key)
 
 
+def swap_round_sides(round_obj):
+    round_obj.p_team, round_obj.d_team = round_obj.d_team, round_obj.p_team
+    round_obj.save(update_fields=['p_team', 'd_team'])
+    captains_meeting, _ = CaptainsMeeting.objects.get_or_create(round=round_obj)
+    swap_captains_meeting_sections(captains_meeting)
+    swap_ballot_sections(round_obj)
+
+
 @login_required
 def swap_elim_sides(request, encrypted_pk):
     if request.method != 'POST':
@@ -149,11 +157,7 @@ def swap_elim_sides(request, encrypted_pk):
         return HttpResponseForbidden()
 
     with transaction.atomic():
-        round_obj.p_team, round_obj.d_team = round_obj.d_team, round_obj.p_team
-        round_obj.save(update_fields=['p_team', 'd_team'])
-        captains_meeting, _ = CaptainsMeeting.objects.get_or_create(round=round_obj)
-        swap_captains_meeting_sections(captains_meeting)
-        swap_ballot_sections(round_obj)
+        swap_round_sides(round_obj)
     return redirect('submission:ballot', encrypted_pk=encrypted_pk)
 
 

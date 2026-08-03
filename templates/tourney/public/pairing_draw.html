@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Ceremony Pairing Draw{% endblock title %}
+
+{% block css %}
+  <link rel="stylesheet" type="text/css" href="{% static "styles/pairing_draw.css" %}">
+{% endblock css %}
+
+{% block content %}
+  {{ teams|json_script:"ceremony-team-data" }}
+
+  <main class="draw-page">
+    <section class="draw-header">
+      <div>
+        <p class="draw-kicker">Opening Ceremony</p>
+        <h1>Ceremony Pairing Draw</h1>
+      </div>
+      <a class="button button-secondary" href="{% url 'index' %}">Back Home</a>
+    </section>
+
+    {% if errors %}
+      <div class="draw-alert" role="alert">
+        {% for error in errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <div class="draw-tabs" role="tablist" aria-label="Pairing draw sections">
+      <button class="draw-tab is-active" type="button" data-tab-target="setup-panel">Setup</button>
+      <button class="draw-tab" type="button" data-tab-target="ceremony-panel">Ceremony</button>
+    </div>
+
+    <section class="draw-panel is-active" id="setup-panel">
+      <form class="draw-upload" method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="excel-file">Excel workbook</label>
+        <div class="draw-file-row">
+          <input id="excel-file" type="file" name="excel_file" accept=".xlsx,.xlsm,.xltx,.xltm" required>
+          <button class="button button-primary" type="submit">Load Teams</button>
+        </div>
+      </form>
+
+      <div class="draw-settings">
+        <fieldset>
+          <legend>First team side</legend>
+          <label>
+            <input type="radio" name="first_side" value="Prosecution" checked>
+            Prosecution
+          </label>
+          <label>
+            <input type="radio" name="first_side" value="Plaintiff">
+            Plaintiff
+          </label>
+        </fieldset>
+      </div>
+
+      <div class="draw-summary">
+        <div>
+          <span id="team-count">{{ teams|length }}</span>
+          <small>teams loaded</small>
+        </div>
+        <div>
+          <span id="school-count">0</span>
+          <small>schools</small>
+        </div>
+        <div>
+          <span id="pair-count">0</span>
+          <small>pairings</small>
+        </div>
+      </div>
+    </section>
+
+    <section class="draw-panel" id="ceremony-panel">
+      <div class="stage">
+        <div class="stage-topline">
+          <div>
+            <p class="draw-kicker">Now Drawing</p>
+            <h2 id="current-slot">First team</h2>
+          </div>
+          <button class="button button-secondary" type="button" id="reset-draw">Reset</button>
+        </div>
+
+        <button class="draw-button" type="button" id="draw-team">Draw Team</button>
+        <p class="draw-status" id="draw-status"></p>
+      </div>
+
+      <div class="pairing-list" id="pairing-list" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div class="draw-modal" id="draw-modal" aria-hidden="true">
+    <div class="draw-modal-content">
+      <p id="modal-side"></p>
+      <button type="button" id="modal-team"></button>
+      <small id="modal-school"></small>
+    </div>
+  </div>
+{% endblock content %}
+
+{% block js %}
+  <script src="{% static 'js/pairing_draw.js' %}"></script>
+{% endblock js %}

@@ -1599,6 +1599,67 @@ def index(request):
     return render(request, 'index.html')
 
 
+def get_cell_text(worksheet, row_num, col_num):
+    value = worksheet.cell(row_num, col_num).value
+    return str(value or '').strip()
+
+
+def find_ceremony_team_columns(worksheet):
+    headers = {
+        normalize_excel_header(worksheet.cell(1, col).value): col
+        for col in range(1, worksheet.max_column + 1)
+    }
+    team_col = (
+        headers.get('team name')
+        or headers.get('team')
+        or headers.get('name')
+        or 1
+    )
+    school_col = headers.get('school') or headers.get('institution') or 2
+    return team_col, school_col
+
+
+def parse_ceremony_teams(workbook):
+    worksheet = workbook['Teams'] if 'Teams' in workbook.sheetnames else workbook.active
+    team_col, school_col = find_ceremony_team_columns(worksheet)
+    teams = []
+    seen_names = set()
+    for row_num in range(2, worksheet.max_row + 1):
+        team_name = get_cell_text(worksheet, row_num, team_col)
+        school = get_cell_text(worksheet, row_num, school_col)
+        if not team_name:
+            continue
+        name_key = normalize_excel_header(team_name)
+        if name_key in seen_names:
+            continue
+        seen_names.add(name_key)
+        teams.append({
+            'name': team_name,
+            'school': school or 'Unknown School',
+        })
+    return teams
+
+
+def public_pairing_draw(request):
+    context = {
+        'teams': [],
+        'errors': [],
+    }
+    if request.method == 'POST':
+        excel_file = request.FILES.get('excel_file')
+        if not excel_file:
+            context['errors'].append('Please upload an Excel workbook.')
+        else:
+            try:
+                workbook = openpyxl.load_workbook(excel_file, read_only=True, data_only=True)
+                context['teams'] = parse_ceremony_teams(workbook)
+                if len(context['teams']) < 2:
+                    context['errors'].append('The workbook needs at least two teams.')
+            except Exception as exc:
+                context['errors'].append(f'Could not read the workbook: {exc}')
+    return render(request, 'tourney/public/pairing_draw.html', context)
+
+
 @user_passes_test(lambda u: u.is_staff)
 def results(request):
     tournament = request.user.tournament

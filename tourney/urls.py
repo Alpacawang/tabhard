@@ -5,6 +5,7 @@ app_name = 'tourney'
 urlpatterns = [
 
     path('refresh', views.refresh, name='refresh'),
+    path('public/pairing-draw', views.public_pairing_draw, name='public_pairing_draw'),
     path('edit_characters', views.edit_characters, name='edit_characters'),
     path('pairing', views.pairing_index, name='pairing_index'),
     path('pairing/<int:pk>', views.view_pairing, name='view_pairing'),

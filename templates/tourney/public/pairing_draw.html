@@ -70,6 +70,14 @@
           <small>pairings</small>
         </div>
       </div>
+
+      <div class="manual-assignment" id="manual-assignment">
+        <div class="manual-assignment-header">
+          <h2>Manual Side Assignment</h2>
+          <button class="button button-secondary" type="button" id="clear-manual-sides">Clear Manual Sides</button>
+        </div>
+        <div class="manual-assignment-table" id="manual-assignment-table"></div>
+      </div>
     </section>
 
     <section class="draw-panel" id="ceremony-panel">
@@ -82,7 +90,13 @@
           <button class="button button-secondary" type="button" id="reset-draw">Reset</button>
         </div>
 
-        <button class="draw-button" type="button" id="draw-team">Draw Team</button>
+        <div class="wheel-wrap" aria-hidden="true">
+          <div class="wheel-pointer"></div>
+          <div class="draw-wheel" id="draw-wheel"></div>
+          <div class="wheel-center" id="wheel-center">Ready</div>
+        </div>
+
+        <button class="draw-button" type="button" id="draw-team">Spin Wheel</button>
         <p class="draw-status" id="draw-status"></p>
       </div>
 
